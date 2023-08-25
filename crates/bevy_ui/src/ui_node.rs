@@ -651,7 +651,7 @@ impl Default for AlignItems {
     }
 }
 
-/// How items are aligned according to the cross axis
+/// How items are aligned according to the main axis
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Reflect)]
 #[reflect(PartialEq, Serialize, Deserialize)]
 pub enum JustifyItems {
@@ -665,7 +665,7 @@ pub enum JustifyItems {
     Center,
     /// Items are aligned at the baseline.
     Baseline,
-    /// Items are stretched across the whole cross axis.
+    /// Items are stretched across the whole main axis.
     Stretch,
 }
 
@@ -714,12 +714,12 @@ impl Default for AlignSelf {
     }
 }
 
-/// How this item is aligned according to the cross axis.
-/// Overrides [`AlignItems`].
+/// How this item is aligned according to the main axis.
+/// Overrides [`JustifyItems`].
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Reflect)]
 #[reflect(PartialEq, Serialize, Deserialize)]
 pub enum JustifySelf {
-    /// Use the parent node's [`AlignItems`] value to determine how this item should be aligned.
+    /// Use the parent node's [`JustifyItems`] value to determine how this item should be aligned.
     Auto,
     /// This item will be aligned with the start of the axis.
     Start,
@@ -729,7 +729,7 @@ pub enum JustifySelf {
     Center,
     /// This item will be aligned at the baseline.
     Baseline,
-    /// This item will be stretched across the whole cross axis.
+    /// This item will be stretched across the whole main axis.
     Stretch,
 }
 
@@ -897,7 +897,7 @@ impl Default for FlexDirection {
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Reflect, Serialize, Deserialize)]
 #[reflect(PartialEq, Serialize, Deserialize)]
 pub struct Overflow {
-    /// Whether to show or clip overflowing items on the x axis        
+    /// Whether to show or clip overflowing items on the x axis
     pub x: OverflowAxis,
     /// Whether to show or clip overflowing items on the y axis
     pub y: OverflowAxis,
@@ -991,7 +991,7 @@ pub enum PositionType {
 }
 
 impl PositionType {
-    const DEFAULT: Self = Self::Relative;
+    pub const DEFAULT: Self = Self::Relative;
 }
 
 impl Default for PositionType {
@@ -1013,7 +1013,7 @@ pub enum FlexWrap {
 }
 
 impl FlexWrap {
-    const DEFAULT: Self = Self::NoWrap;
+    pub const DEFAULT: Self = Self::NoWrap;
 }
 
 impl Default for FlexWrap {
@@ -1043,7 +1043,7 @@ pub enum GridAutoFlow {
 }
 
 impl GridAutoFlow {
-    const DEFAULT: Self = Self::Row;
+    pub const DEFAULT: Self = Self::Row;
 }
 
 impl Default for GridAutoFlow {
@@ -1100,7 +1100,7 @@ pub struct GridTrack {
 }
 
 impl GridTrack {
-    const DEFAULT: Self = Self {
+    pub const DEFAULT: Self = Self {
         min_sizing_function: MinTrackSizingFunction::Auto,
         max_sizing_function: MaxTrackSizingFunction::Auto,
     };
@@ -1435,7 +1435,7 @@ pub struct GridPlacement {
 }
 
 impl GridPlacement {
-    const DEFAULT: Self = Self {
+    pub const DEFAULT: Self = Self {
         start: None,
         span: Some(1),
         end: None,
