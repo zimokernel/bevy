@@ -1892,7 +1892,7 @@ mod tests {
         let starting_vec4 = Vec4::new(0.4, 0.5, 0.6, 1.0);
         let starting_color = Color::from(starting_vec4);
 
-        assert_eq!(starting_vec4, Vec4::from(starting_color),);
+        assert_eq!(starting_vec4, Vec4::from(starting_color));
 
         let transformation = Vec4::new(0.5, 0.5, 0.5, 1.0);
 
@@ -1915,7 +1915,7 @@ mod tests {
         let mut mutated_color = starting_color;
         mutated_color *= transformation;
 
-        assert_eq!(starting_color * transformation, mutated_color,);
+        assert_eq!(starting_color * transformation, mutated_color);
     }
 
     #[test]
@@ -1931,7 +1931,7 @@ mod tests {
         let mut mutated_color = starting_color;
         mutated_color *= transformation;
 
-        assert_eq!(starting_color * transformation, mutated_color,);
+        assert_eq!(starting_color * transformation, mutated_color);
     }
 
     #[test]
@@ -1947,7 +1947,7 @@ mod tests {
         let mut mutated_color = starting_color;
         mutated_color *= transformation;
 
-        assert_eq!(starting_color * transformation, mutated_color,);
+        assert_eq!(starting_color * transformation, mutated_color);
     }
 
     #[test]
@@ -1963,7 +1963,7 @@ mod tests {
         let mut mutated_color = starting_color;
         mutated_color *= transformation;
 
-        assert_eq!(starting_color * transformation, mutated_color,);
+        assert_eq!(starting_color * transformation, mutated_color);
     }
 
     #[test]
@@ -1979,7 +1979,7 @@ mod tests {
         let mut mutated_color = starting_color;
         mutated_color *= transformation;
 
-        assert_eq!(starting_color * transformation, mutated_color,);
+        assert_eq!(starting_color * transformation, mutated_color);
     }
 
     // regression test for https://github.com/bevyengine/bevy/pull/8040
@@ -1990,8 +1990,14 @@ mod tests {
         let hsla = Color::hsla(0., 0., 0., 0.);
         let lcha = Color::lcha(0., 0., 0., 0.);
         assert_eq!(rgba_l, rgba_l.as_rgba_linear());
-        let Color::RgbaLinear { .. } = rgba.as_rgba_linear() else { panic!("from Rgba") };
-        let Color::RgbaLinear { .. } = hsla.as_rgba_linear() else { panic!("from Hsla") };
-        let Color::RgbaLinear { .. } = lcha.as_rgba_linear() else { panic!("from Lcha") };
+        let Color::RgbaLinear { .. } = rgba.as_rgba_linear() else {
+            panic!("from Rgba")
+        };
+        let Color::RgbaLinear { .. } = hsla.as_rgba_linear() else {
+            panic!("from Hsla")
+        };
+        let Color::RgbaLinear { .. } = lcha.as_rgba_linear() else {
+            panic!("from Lcha")
+        };
     }
 }
