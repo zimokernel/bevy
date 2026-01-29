@@ -5,8 +5,7 @@ mod render_device;
 mod wgpu_wrapper;
 
 pub use render_context::{
-    CurrentView, CurrentViewEntity, FlushCommands, PendingCommandBuffers, RenderContext,
-    RenderContextState, ViewQuery,
+    CurrentView, FlushCommands, PendingCommandBuffers, RenderContext, RenderContextState, ViewQuery,
 };
 pub use render_device::*;
 pub use wgpu_wrapper::WgpuWrapper;
@@ -20,6 +19,7 @@ use bevy_camera::NormalizedRenderTarget;
 use bevy_derive::{Deref, DerefMut};
 use bevy_ecs::schedule::ScheduleLabel;
 use bevy_ecs::{prelude::*, system::SystemState};
+use bevy_log::{debug, info, info_span, warn};
 use bevy_platform::time::Instant;
 use bevy_render::camera::ExtractedCamera;
 use bevy_time::TimeSender;
@@ -29,12 +29,12 @@ use wgpu::{
     Adapter, AdapterInfo, Backends, DeviceType, Instance, Queue, RequestAdapterOptions, Trace,
 };
 
-/// 渲染图调度标签 - Bevy 渲染引擎的核心调度
+/// Schedule label for the root render graph schedule. This schedule runs once per frame
+/// in the [`render_system`] system and is responsible for driving the entire rendering process.
 #[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct RenderGraph;
 
 impl RenderGraph {
-    /// 创建基础渲染调度
     pub fn base_schedule() -> Schedule {
         Schedule::new(Self)
     }
@@ -48,6 +48,9 @@ impl RenderGraph {
 /// 3. 呈现帧到窗口
 /// 4. 收集截图
 /// 5. 更新时间并发送到应用世界
+/// The main render system that drives the rendering process. This system runs the [`RenderGraph`]
+/// schedule, runs any finalization commands like screenshot captures and GPU readbacks, and
+/// calls present on swap chains that need to be presented.
 pub fn render_system(
     world: &mut World,
     state: &mut SystemState<Query<(&ViewTarget, &ExtractedCamera)>>,
@@ -56,7 +59,6 @@ pub fn render_system(
     let _span = info_span!("main_render_schedule").entered();
 
     world.run_schedule(RenderGraph);
-    // 运行渲染图调度
 
     {
         let render_device = world.resource::<RenderDevice>();

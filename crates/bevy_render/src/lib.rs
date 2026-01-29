@@ -71,7 +71,6 @@ pub mod occlusion_culling;
 pub mod pipelined_rendering;
 // 流水线渲染模块 - 仅在非 WASM 平台可用的流水线渲染
 pub mod render_asset;
-// 渲染资源模块 - 渲染资源的准备和管理
 pub mod render_phase;
 // 渲染阶段模块 - 渲染阶段和绘制逻辑
 pub mod render_resource;

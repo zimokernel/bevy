@@ -6,7 +6,6 @@ use crate::{
     extract_resource::{ExtractResource, ExtractResourcePlugin},
     // 资源提取插件
     render_asset::RenderAssets,
-    // 渲染资源
     render_resource::TextureView,
     // 纹理视图
     sync_world::{RenderEntity, SyncToRenderWorld},
@@ -54,9 +53,7 @@ use bevy_ecs::{
     reflect::ReflectComponent,
     // 反射组件
     resource::Resource,
-    // 资源
     schedule::{InternedScheduleLabel, IntoScheduleConfigs, ScheduleLabel},
-    // 调度相关
     system::{Commands, Query, Res, ResMut},
     // 系统参数
     world::DeferredWorld,
@@ -119,7 +116,6 @@ impl Plugin for CameraPlugin {
                 .add_systems(ExtractSchedule, extract_cameras)
                 // 添加相机提取系统
                 .add_systems(Render, sort_cameras.in_set(RenderSystems::ManageViews));
-                // 添加相机排序系统
         }
     }
 }
@@ -171,7 +167,6 @@ impl ExtractComponent for Camera3d {
 }
 
 /// Configures the render schedule to be run for a given [`Camera`] entity.
-/// 配置要为给定的 [`Camera`] 实体运行的渲染调度
 #[derive(Component, Debug, Deref, DerefMut, Reflect, Clone)]
 #[reflect(opaque)]
 #[reflect(Component, Debug, Clone)]
@@ -179,14 +174,12 @@ pub struct CameraRenderGraph(pub InternedScheduleLabel);
 
 impl CameraRenderGraph {
     /// Creates a new [`CameraRenderGraph`] from a schedule label.
-    /// 从调度标签创建新的 [`CameraRenderGraph`]
     #[inline]
     pub fn new<T: ScheduleLabel>(schedule: T) -> Self {
         Self(schedule.intern())
     }
 
     /// Sets the schedule.
-    /// 设置调度
     #[inline]
     pub fn set<T: ScheduleLabel>(&mut self, schedule: T) {
         self.0 = schedule.intern();
@@ -477,9 +470,7 @@ pub struct ExtractedCamera {
     pub physical_target_size: Option<UVec2>,
     // 目标的物理大小
     pub viewport: Option<Viewport>,
-    // 视口
     pub schedule: InternedScheduleLabel,
-    // 要运行的调度
     pub order: isize,
     // 渲染顺序
     pub output_mode: CameraOutputMode,

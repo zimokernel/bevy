@@ -44,6 +44,11 @@ pub fn main_opaque_pass_2d(
     // 获取视图实体
     let (camera, extracted_view, target, depth) = view.into_inner();
     // 获取视图内部组件
+    alpha_mask_phases: Res<ViewBinnedRenderPhases<AlphaMask2d>>,
+    mut ctx: RenderContext,
+) {
+    let view_entity = view.entity();
+    let (camera, extracted_view, target, depth) = view.into_inner();
 
     let (Some(opaque_phase), Some(alpha_mask_phase)) = (
         opaque_phases.get(&extracted_view.retained_view_entity),
@@ -68,6 +73,9 @@ pub fn main_opaque_pass_2d(
     let color_attachments = [Some(target.get_color_attachment())];
     let depth_stencil_attachment = Some(depth.get_attachment(StoreOp::Store));
     // 设置颜色和深度模板附件
+
+    let color_attachments = [Some(target.get_color_attachment())];
+    let depth_stencil_attachment = Some(depth.get_attachment(StoreOp::Store));
 
     let mut render_pass = ctx.begin_tracked_render_pass(RenderPassDescriptor {
         label: Some("main_opaque_pass_2d"),
@@ -105,4 +113,6 @@ pub fn main_opaque_pass_2d(
 
     pass_span.end(&mut render_pass);
     // 结束渲染通道
+
+    pass_span.end(&mut render_pass);
 }

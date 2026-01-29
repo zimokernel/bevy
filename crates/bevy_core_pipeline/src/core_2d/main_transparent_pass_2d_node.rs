@@ -41,6 +41,10 @@ pub fn main_transparent_pass_2d(
     // 获取视图实体
     let (camera, extracted_view, target, depth) = view.into_inner();
     // 获取视图内部组件
+    mut ctx: RenderContext,
+) {
+    let view_entity = view.entity();
+    let (camera, extracted_view, target, depth) = view.into_inner();
 
     let Some(transparent_phase) = transparent_phases.get(&extracted_view.retained_view_entity)
     else {
