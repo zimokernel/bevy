@@ -14,7 +14,7 @@ use crate::{
     texture::{GpuImage, ManualTextureViews},
     // GPU 图像和手动纹理视图
     view::{
-        ColorGrading, ExtractedView, ExtractedWindows, Hdr, Msaa, NoIndirectDrawing,
+        ColorGrading, ExtractedView, ExtractedWindows, Msaa, NoIndirectDrawing,
         RenderVisibleEntities, RetainedViewEntity, ViewUniformOffset,
     },
     // 视图相关组件
@@ -29,9 +29,7 @@ use bevy_camera::{
     visibility::{self, RenderLayers, VisibleEntities},
     // 可见性系统
     Camera, Camera2d, Camera3d, CameraMainTextureUsages, CameraOutputMode, CameraUpdateSystems,
-    // 相机相关组件
-    ClearColor, ClearColorConfig, Exposure, ManualTextureViewHandle, MsaaWriteback,
-    // 清除颜色、曝光等
+    ClearColor, ClearColorConfig, Exposure, Hdr, ManualTextureViewHandle, MsaaWriteback,
     NormalizedRenderTarget, Projection, RenderTarget, RenderTargetInfo, Viewport,
     // 渲染目标和视口
 };
@@ -65,7 +63,8 @@ use bevy_ecs::{
     // 延迟世界
 };
 use bevy_image::Image;
-// 图像类型
+use bevy_log::warn;
+use bevy_log::warn_once;
 use bevy_math::{uvec2, vec2, Mat4, URect, UVec2, UVec4, Vec2};
 // 数学类型
 use bevy_platform::collections::{HashMap, HashSet};
@@ -75,9 +74,6 @@ use bevy_reflect::prelude::*;
 use bevy_transform::components::GlobalTransform;
 // 全局变换
 use bevy_window::{PrimaryWindow, Window, WindowCreated, WindowResized, WindowScaleFactorChanged};
-// 窗口相关
-use tracing::warn;
-// 日志警告
 use wgpu::TextureFormat;
 // WGPU 纹理格式
 
@@ -745,7 +741,7 @@ pub fn sort_cameras(
     }
 
     if !ambiguities.is_empty() {
-        warn!(
+        warn_once!(
             "Camera order ambiguities detected for active cameras with the following priorities: {:?}. \
             To fix this, ensure there is exactly one Camera entity spawned with a given order for a given RenderTarget. \
             Ambiguities should be resolved because either (1) multiple active cameras were spawned accidentally, which will \

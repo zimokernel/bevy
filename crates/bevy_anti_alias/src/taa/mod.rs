@@ -1,4 +1,3 @@
-use crate::AntiAliasing;
 use bevy_app::{App, Plugin};
 use bevy_asset::{embedded_asset, load_embedded_asset, AssetServer};
 use bevy_camera::{Camera, Camera3d};
@@ -74,8 +73,7 @@ impl Plugin for TemporalAntiAliasPlugin {
             temporal_anti_alias
                 .after(motion_blur)
                 .before(bloom)
-                .in_set(Core3dSystems::PostProcess)
-                .in_set(AntiAliasing),
+                .in_set(Core3dSystems::PostProcess),
         );
     }
 }
@@ -204,6 +202,7 @@ fn temporal_anti_alias(
         depth_stencil_attachment: None,
         timestamp_writes: None,
         occlusion_query_set: None,
+        multiview_mask: None,
     });
     let pass_span = diagnostics.pass_span(&mut taa_pass, "taa");
 

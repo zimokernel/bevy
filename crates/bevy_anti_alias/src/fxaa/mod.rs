@@ -1,4 +1,3 @@
-use crate::AntiAliasing;
 use bevy_app::prelude::*;
 use bevy_asset::{embedded_asset, load_embedded_asset, AssetServer, Handle};
 use bevy_camera::Camera;
@@ -102,15 +101,11 @@ impl Plugin for FxaaPlugin {
             )
             .add_systems(
                 Core3d,
-                fxaa.after(tonemapping)
-                    .in_set(Core3dSystems::PostProcess)
-                    .in_set(AntiAliasing),
+                fxaa.after(tonemapping).in_set(Core3dSystems::PostProcess),
             )
             .add_systems(
                 Core2d,
-                fxaa.after(tonemapping)
-                    .in_set(Core2dSystems::PostProcess)
-                    .in_set(AntiAliasing),
+                fxaa.after(tonemapping).in_set(Core2dSystems::PostProcess),
             );
     }
 }
@@ -141,7 +136,7 @@ pub fn init_fxaa_pipeline(
     );
 
     let sampler = render_device.create_sampler(&SamplerDescriptor {
-        mipmap_filter: FilterMode::Linear,
+        mipmap_filter: MipmapFilterMode::Linear,
         mag_filter: FilterMode::Linear,
         min_filter: FilterMode::Linear,
         ..default()

@@ -51,9 +51,6 @@ pub mod camera;
 pub mod diagnostic;
 // 诊断模块 - 渲染性能诊断和统计
 pub mod erased_render_asset;
-// 擦除的渲染资源模块 - 类型擦除的渲染资源管理
-pub mod experimental;
-// 实验性模块 - 包含实验性的渲染功能
 pub mod extract_component;
 // 提取组件模块 - 从主世界提取组件到渲染世界
 pub mod extract_instances;
@@ -69,7 +66,7 @@ pub mod gpu_component_array_buffer;
 pub mod gpu_readback;
 // GPU 回读模块 - 从 GPU 读取数据回 CPU
 pub mod mesh;
-// 网格模块 - 网格数据结构和渲染
+pub mod occlusion_culling;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod pipelined_rendering;
 // 流水线渲染模块 - 仅在非 WASM 平台可用的流水线渲染
@@ -147,10 +144,8 @@ use bevy_utils::prelude::default;
 use bevy_window::{PrimaryWindow, RawHandleWrapperHolder};
 use bitflags::bitflags;
 use core::ops::{Deref, DerefMut};
-use experimental::occlusion_culling::OcclusionCullingPlugin;
-// 遮挡剔除插件 - 实验性的遮挡剔除功能
 use globals::GlobalsPlugin;
-// 全局变量插件 - 全局着色器变量管理
+use occlusion_culling::OcclusionCullingPlugin;
 use render_asset::{
     extract_render_asset_bytes_per_frame, reset_render_asset_bytes_per_frame,
     RenderAssetBytesPerFrame, RenderAssetBytesPerFrameLimiter,
@@ -635,7 +630,7 @@ unsafe fn initialize_render_app(app: &mut App) {
 
         {
             #[cfg(feature = "trace")]
-            let _stage_span = tracing::info_span!("entity_sync").entered();
+            let _stage_span = bevy_log::info_span!("entity_sync").entered();
             entity_sync_system(main_world, render_world);
         }
         // 同步实体

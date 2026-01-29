@@ -20,15 +20,15 @@ mod prepare;
 
 pub use dlss_wgpu::DlssPerfQualityMode;
 
-use crate::AntiAliasing;
 use bevy_app::{App, Plugin};
+use bevy_camera::Hdr;
 use bevy_core_pipeline::{
     prepass::{DepthPrepass, MotionVectorPrepass},
     schedule::{Core3d, Core3dSystems},
 };
 use bevy_ecs::prelude::*;
 use bevy_math::{UVec2, Vec2};
-use bevy_post_process::{bloom::bloom, motion_blur::node::motion_blur};
+use bevy_post_process::bloom::bloom;
 use bevy_reflect::{reflect_remote, Reflect};
 use bevy_render::{
     camera::{MipBias, TemporalJitter},
@@ -37,7 +37,7 @@ use bevy_render::{
         RenderDevice, RenderQueue,
     },
     texture::CachedTexture,
-    view::{prepare_view_targets, Hdr},
+    view::prepare_view_targets,
     ExtractSchedule, Render, RenderApp, RenderSystems,
 };
 use dlss_wgpu::{
@@ -194,10 +194,8 @@ impl Plugin for DlssPlugin {
             Core3d,
             (node::dlss_super_resolution, node::dlss_ray_reconstruction)
                 .chain()
-                .after(motion_blur)
                 .before(bloom)
-                .in_set(Core3dSystems::PostProcess)
-                .in_set(AntiAliasing),
+                .in_set(Core3dSystems::PostProcess),
         );
     }
 }

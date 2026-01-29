@@ -3,6 +3,7 @@ use crate::diagnostic::internal::DiagnosticsRecorder;
 use crate::render_phase::TrackedRenderPass;
 use crate::render_resource::{CommandEncoder, RenderPassDescriptor};
 use crate::renderer::RenderDevice;
+use bevy_derive::{Deref, DerefMut};
 use bevy_ecs::change_detection::Tick;
 use bevy_ecs::component::ComponentId;
 use bevy_ecs::prelude::*;
@@ -12,8 +13,8 @@ use bevy_ecs::system::{
 };
 use bevy_ecs::world::unsafe_world_cell::UnsafeWorldCell;
 use bevy_ecs::world::DeferredWorld;
+use bevy_log::info_span;
 use core::marker::PhantomData;
-use tracing::info_span;
 use wgpu::CommandBuffer;
 
 /// 待处理命令缓冲区的内部结构
@@ -25,7 +26,7 @@ struct PendingCommandBuffersInner {
     // 命令编码器列表
 }
 
-/// 待处理的命令缓冲区资源
+/// A resource that holds command buffers and encoders that are pending submission to the render queue.
 #[derive(Resource)]
 pub struct PendingCommandBuffers(WgpuWrapper<PendingCommandBuffersInner>);
 
@@ -77,7 +78,9 @@ struct RenderContextStateInner {
     // 渲染设备
 }
 
-/// 渲染上下文状态 - 管理渲染过程中的命令编码器和缓冲区
+/// A resource that holds the current render context state, including command encoder and command buffers.
+/// This is used internally by the [`RenderContext`] system parameter. Implements [`SystemBuffer`] to flush
+/// command buffers at the end of each render system in topological system order.
 pub struct RenderContextState(WgpuWrapper<RenderContextStateInner>);
 
 impl Default for RenderContextState {
@@ -118,27 +121,27 @@ impl SystemBuffer for RenderContextState {
     fn apply(&mut self, system_meta: &SystemMeta, world: &mut World) {
         let _span = info_span!("RenderContextState::apply", system = %system_meta.name()).entered();
 
-        let has_buffers = !self.0.command_buffers.is_empty();
-        let has_encoder = self.0.command_encoder.is_some();
+        let inner = &mut *self.0;
 
-        if has_buffers || has_encoder {
-            let mut pending = world.resource_mut::<PendingCommandBuffers>();
-
-            if has_buffers {
-                pending.push(core::mem::take(&mut self.0.command_buffers));
-            }
-
-            if let Some(encoder) = self.0.command_encoder.take() {
-                pending.push_encoder(encoder);
-            }
+        // flush to ensure correct submission order
+        if let Some(encoder) = inner.command_encoder.take() {
+            inner.command_buffers.push(encoder.finish());
         }
 
-        self.0.render_device = None;
+        if !inner.command_buffers.is_empty() {
+            let mut pending = world.resource_mut::<PendingCommandBuffers>();
+            pending.push(core::mem::take(&mut inner.command_buffers));
+        }
+
+        inner.render_device = None;
     }
 
     fn queue(&mut self, _system_meta: &SystemMeta, _world: DeferredWorld) {}
 }
 
+/// A system parameter that provides access to a command encoder and render device for issuing
+/// rendering commands inside any system running beneath the root [`super::RenderGraph`] schedule in the
+/// [`super::render_system`] system.
 #[derive(SystemParam)]
 pub struct RenderContext<'w, 's> {
     state: Deferred<'s, RenderContextState>,
@@ -153,19 +156,23 @@ impl<'w, 's> RenderContext<'w, 's> {
         }
     }
 
+    /// Returns the render device associated with this render context.
     pub fn render_device(&self) -> &RenderDevice {
         &self.render_device
     }
 
+    /// Returns the diagnostics recorder, if available.
     pub fn diagnostic_recorder(&self) -> Option<Res<'w, DiagnosticsRecorder>> {
         self.diagnostics_recorder.as_ref().map(Res::clone)
     }
 
+    /// Returns the current command encoder, creating one if it does not already exist.
     pub fn command_encoder(&mut self) -> &mut CommandEncoder {
         self.ensure_device();
         self.state.command_encoder()
     }
 
+    /// Begins a tracked render pass with the given descriptor.
     pub fn begin_tracked_render_pass<'a>(
         &'a mut self,
         descriptor: RenderPassDescriptor<'_>,
@@ -181,12 +188,16 @@ impl<'w, 's> RenderContext<'w, 's> {
         TrackedRenderPass::new(&self.render_device, render_pass)
     }
 
+    /// Adds a finished command buffer to be submitted later.
     pub fn add_command_buffer(&mut self, command_buffer: CommandBuffer) {
         self.state.flush_encoder();
         self.state.0.command_buffers.push(command_buffer);
     }
 }
 
+/// A system parameter that can be used to explicitly flush pending command buffers to the render queue.
+/// This is typically not necessary, as command buffers are automatically flushed at the end of each
+/// render system. However, in some cases it may be useful to flush command buffers earlier.
 #[derive(SystemParam)]
 pub struct FlushCommands<'w> {
     pending: ResMut<'w, PendingCommandBuffers>,
@@ -194,6 +205,7 @@ pub struct FlushCommands<'w> {
 }
 
 impl<'w> FlushCommands<'w> {
+    /// Flushes all pending command buffers to the render queue.
     pub fn flush(&mut self) {
         let buffers = self.pending.take();
         if !buffers.is_empty() {
@@ -202,41 +214,12 @@ impl<'w> FlushCommands<'w> {
     }
 }
 
-#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CurrentViewEntity(pub Entity);
+/// The entity corresponding to the current view being rendered.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Deref, DerefMut)]
+pub struct CurrentView(pub Entity);
 
-impl CurrentViewEntity {
-    pub fn new(entity: Entity) -> Self {
-        Self(entity)
-    }
-
-    #[inline]
-    pub fn entity(&self) -> Entity {
-        self.0
-    }
-}
-
-#[derive(SystemParam)]
-pub struct CurrentView<'w> {
-    entity: Res<'w, CurrentViewEntity>,
-}
-
-impl<'w> CurrentView<'w> {
-    #[inline]
-    pub fn entity(&self) -> Entity {
-        self.entity.0
-    }
-}
-
-impl<'w> core::ops::Deref for CurrentView<'w> {
-    type Target = Entity;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.entity.0
-    }
-}
-
+/// A query that fetches components for the entity corresponding to the current view being rendered,
+/// as defined by the [`CurrentView`] resource, equivalent to `query.get(current_view.entity())`.
 pub struct ViewQuery<'w, 's, D: QueryData, F: QueryFilter = ()> {
     entity: Entity,
     item: D::Item<'w, 's>,
@@ -260,7 +243,7 @@ pub struct ViewQueryState<D: QueryData, F: QueryFilter> {
     query_state: QueryState<D, F>,
 }
 
-// SAFETY: ViewQuery accesses the CurrentViewEntity resource (read) and query components.
+// SAFETY: ViewQuery accesses the CurrentView resource (read) and query components.
 // Access is properly registered in init_access.
 unsafe impl<'a, D: QueryData + 'static, F: QueryFilter + 'static> SystemParam
     for ViewQuery<'a, '_, D, F>
@@ -272,7 +255,7 @@ unsafe impl<'a, D: QueryData + 'static, F: QueryFilter + 'static> SystemParam
         ViewQueryState {
             resource_id: world
                 .components_registrator()
-                .register_resource::<CurrentViewEntity>(),
+                .register_resource::<CurrentView>(),
             query_state: QueryState::new(world),
         }
     }
@@ -300,11 +283,11 @@ unsafe impl<'a, D: QueryData + 'static, F: QueryFilter + 'static> SystemParam
         world: UnsafeWorldCell,
     ) -> Result<(), SystemParamValidationError> {
         // SAFETY: We have registered resource read access in init_access
-        let current_view = unsafe { world.get_resource::<CurrentViewEntity>() };
+        let current_view = unsafe { world.get_resource::<CurrentView>() };
 
         let Some(current_view) = current_view else {
             return Err(SystemParamValidationError::skipped::<Self>(
-                "CurrentViewEntity resource not present",
+                "CurrentView resource not present",
             ));
         };
 
@@ -333,8 +316,8 @@ unsafe impl<'a, D: QueryData + 'static, F: QueryFilter + 'static> SystemParam
         // SAFETY: We have registered resource read access and validate_param succeeded
         let current_view = unsafe {
             world
-                .get_resource::<CurrentViewEntity>()
-                .expect("CurrentViewEntity must exist")
+                .get_resource::<CurrentView>()
+                .expect("CurrentView must exist")
         };
 
         let entity = current_view.entity();

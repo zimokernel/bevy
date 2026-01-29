@@ -1,3 +1,14 @@
+//! The core rendering pipelines schedules. These schedules define the "default" render graph
+//! for 2D and 3D rendering in Bevy.
+//!
+//! Rendering in Bevy is "camera driven", meaning that for each camera in the world, its
+//! associated rendering schedule is executed. This allows different cameras to have different
+//! rendering pipelines, for example a 3D camera with post-processing effects and a 2D camera
+//! with a simple clear and sprite rendering.
+//!
+//! The [`camera_driver`] system is responsible for iterating over all cameras in the world
+//! and executing their associated schedules. In this way, the schedule for each camera is a
+//! sub-schedule or sub-graph of the root render graph schedule.
 use bevy_camera::{ClearColor, NormalizedRenderTarget};
 use bevy_ecs::{
     prelude::*,
@@ -10,7 +21,7 @@ use bevy_render::{
         CommandEncoderDescriptor, LoadOp, Operations, RenderPassColorAttachment,
         RenderPassDescriptor, StoreOp,
     },
-    renderer::{CurrentViewEntity, PendingCommandBuffers, RenderDevice, RenderQueue},
+    renderer::{CurrentView, PendingCommandBuffers, RenderDevice, RenderQueue},
     view::ExtractedWindows,
 };
 use tracing::info_span;
@@ -19,6 +30,14 @@ use tracing::info_span;
 #[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct Core3d;
 
+/// System sets for the Core 3D rendering pipeline, defining the main stages of rendering.
+/// These stages include and run in the following order:
+/// - `Prepass`: Initial rendering operations, such as depth pre-pass.
+/// - `MainPass`: The primary rendering operations, including drawing opaque and transparent objects.
+/// - `PostProcess`: Final rendering operations, such as post-processing effects.
+///
+/// Additional systems can be added to these sets to customize the rendering pipeline, or additional
+/// sets can be created relative to these core sets.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Core3dSystems {
     Prepass,
@@ -44,9 +63,17 @@ impl Core3d {
     }
 }
 
+/// Schedule label for the Core 2D rendering pipeline.
 #[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct Core2d;
 
+/// System sets for the Core 2D rendering pipeline, defining the main stages of rendering.
+/// These stages include and run in the following order:
+/// - `MainPass`: The primary rendering operations, including drawing 2D sprites and meshes.
+/// - `PostProcess`: Final rendering operations, such as post-processing effects.
+///
+/// Additional systems can be added to these sets to customize the rendering pipeline, or additional
+/// sets can be created relative to these core sets.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Core2dSystems {
     MainPass,
@@ -71,6 +98,14 @@ impl Core2d {
     }
 }
 
+/// The default entry point for camera driven rendering added to the root [`bevy_render::renderer::RenderGraph`]
+/// schedule. This system iterates over all cameras in the world, executing their associated
+/// rendering schedules defined by the [`bevy_render::camera::CameraRenderGraph`] component.
+///
+/// After executing all camera schedules, it submits any pending command buffers to the GPU
+/// and clears any swap chains that were not covered by a camera. Users can order any additional
+/// operations (e.g. one-off compute passes) before or after this system in the root render
+/// graph schedule.
 pub fn camera_driver(world: &mut World) {
     let sorted_cameras: Vec<_> = {
         let sorted = world.resource::<SortedCameras>();
@@ -107,7 +142,7 @@ pub fn camera_driver(world: &mut World) {
         }
 
         if run_schedule {
-            world.insert_resource(CurrentViewEntity::new(camera_entity));
+            world.insert_resource(CurrentView(camera_entity));
 
             #[cfg(feature = "trace")]
             let _span = tracing::info_span!(
@@ -121,7 +156,7 @@ pub fn camera_driver(world: &mut World) {
     }
 
     submit_pending_command_buffers(world);
-    world.remove_resource::<CurrentViewEntity>();
+    world.remove_resource::<CurrentView>();
     handle_uncovered_swap_chains(world, &camera_windows);
 }
 
@@ -181,6 +216,7 @@ fn handle_uncovered_swap_chains(world: &mut World, camera_windows: &HashSet<Enti
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         };
 
         encoder.begin_render_pass(&pass_descriptor);

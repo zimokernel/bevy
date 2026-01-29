@@ -8,7 +8,7 @@ use bevy_material::descriptor::{
 use super::{ComputePipeline, PipelineCache, RenderPipeline};
 // 导入 Bevy 错误类型
 use bevy_ecs::error::BevyError;
-// 导入集合类型
+use bevy_log::error;
 use bevy_platform::{
     collections::{
         hash_map::{Entry, VacantEntry},
@@ -18,9 +18,6 @@ use bevy_platform::{
 };
 // 导入核心类型
 use core::{hash::Hash, marker::PhantomData};
-// 导入日志类型
-use tracing::error;
-// 导入元组处理宏
 use variadics_please::all_tuples;
 
 // 导出特化器相关宏
