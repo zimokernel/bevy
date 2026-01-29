@@ -29,15 +29,25 @@ use wgpu::{
     Adapter, AdapterInfo, Backends, DeviceType, Instance, Queue, RequestAdapterOptions, Trace,
 };
 
+/// 渲染图调度标签 - Bevy 渲染引擎的核心调度
 #[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct RenderGraph;
 
 impl RenderGraph {
+    /// 创建基础渲染调度
     pub fn base_schedule() -> Schedule {
         Schedule::new(Self)
     }
 }
 
+/// 渲染系统 - Bevy 渲染引擎的主渲染循环
+/// 
+/// 该系统负责:
+/// 1. 运行渲染图调度
+/// 2. 提交命令缓冲区到 GPU
+/// 3. 呈现帧到窗口
+/// 4. 收集截图
+/// 5. 更新时间并发送到应用世界
 pub fn render_system(
     world: &mut World,
     state: &mut SystemState<Query<(&ViewTarget, &ExtractedCamera)>>,
@@ -46,6 +56,7 @@ pub fn render_system(
     let _span = info_span!("main_render_schedule").entered();
 
     world.run_schedule(RenderGraph);
+    // 运行渲染图调度
 
     {
         let render_device = world.resource::<RenderDevice>();
@@ -59,6 +70,7 @@ pub fn render_system(
 
         render_queue.submit([encoder.finish()]);
     }
+    // 创建命令编码器并提交截图和回写命令
 
     {
         let _span = info_span!("present_frames").entered();
@@ -87,10 +99,13 @@ pub fn render_system(
             tracy.frame_mark = true
         );
     }
+    // 呈现帧到窗口
 
     crate::view::screenshot::collect_screenshots(world);
+    // 收集截图
 
     // update the time and send it to the app world
+    // 更新时间并发送到应用世界
     let time_sender = world.resource::<TimeSender>();
     if let Err(error) = time_sender.0.try_send(Instant::now()) {
         match error {

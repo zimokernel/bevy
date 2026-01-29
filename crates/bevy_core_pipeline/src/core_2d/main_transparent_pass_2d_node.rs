@@ -12,6 +12,18 @@ use tracing::error;
 #[cfg(feature = "trace")]
 use tracing::info_span;
 
+/// 2D 主透明渲染通道
+/// 
+/// 该函数负责渲染 2D 场景中的透明物体
+/// 它会执行以下步骤:
+/// 1. 获取视图实体和相关组件
+/// 2. 获取透明渲染阶段
+/// 3. 如果阶段为空则直接返回
+/// 4. 创建渲染通道（加载深度缓冲区）
+/// 5. 设置视口
+/// 6. 渲染透明物体
+/// 
+/// 注意：透明通道会加载深度缓冲区但不写入，这样不透明物体可以遮挡透明物体
 pub fn main_transparent_pass_2d(
     world: &World,
     view: ViewQuery<(
@@ -21,21 +33,27 @@ pub fn main_transparent_pass_2d(
         &ViewDepthTexture,
     )>,
     transparent_phases: Res<ViewSortedRenderPhases<Transparent2d>>,
+    // 透明物体渲染阶段
     mut ctx: RenderContext,
+    // 渲染上下文
 ) {
     let view_entity = view.entity();
+    // 获取视图实体
     let (camera, extracted_view, target, depth) = view.into_inner();
+    // 获取视图内部组件
 
     let Some(transparent_phase) = transparent_phases.get(&extracted_view.retained_view_entity)
     else {
         return;
     };
+    // 获取透明渲染阶段
 
     #[cfg(feature = "trace")]
     let _span = info_span!("main_transparent_pass_2d").entered();
 
     let diagnostics = ctx.diagnostic_recorder();
     let diagnostics = diagnostics.as_deref();
+    // 获取诊断记录器
 
     let color_attachments = [Some(target.get_color_attachment())];
     // NOTE: For the transparent pass we load the depth buffer. There should be no
@@ -44,6 +62,8 @@ pub fn main_transparent_pass_2d(
     // so that wgpu does not clear the depth buffer.
     // As the opaque and alpha mask passes run first, opaque meshes can occlude
     // transparent ones.
+    // 注意：对于透明通道，我们加载深度缓冲区。不需要写入它，但 store 设置为 `true` 作为问题 #3776 的解决方法
+    // 这样 wgpu 不会清除深度缓冲区。由于不透明和 alpha 遮罩通道先运行，不透明网格可以遮挡透明物体
     let depth_stencil_attachment = Some(depth.get_attachment(StoreOp::Store));
 
     {
@@ -54,11 +74,13 @@ pub fn main_transparent_pass_2d(
             timestamp_writes: None,
             occlusion_query_set: None,
         });
+        // 创建跟踪渲染通道
         let pass_span = diagnostics.pass_span(&mut render_pass, "main_transparent_pass_2d");
 
         if let Some(viewport) = camera.viewport.as_ref() {
             render_pass.set_camera_viewport(viewport);
         }
+        // 设置相机视口
 
         if !transparent_phase.items.is_empty() {
             #[cfg(feature = "trace")]
@@ -67,12 +89,14 @@ pub fn main_transparent_pass_2d(
                 error!("Error encountered while rendering the transparent 2D phase {err:?}");
             }
         }
+        // 渲染透明物体
 
         pass_span.end(&mut render_pass);
     }
 
     // WebGL2 quirk: if ending with a render pass with a custom viewport, the viewport isn't
     // reset for the next render pass so add an empty render pass without a custom viewport
+    // WebGL2 特性：如果以带有自定义视口的渲染通道结束，视口不会为下一个渲染通道重置，因此添加一个没有自定义视口的空渲染通道
     #[cfg(all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")))]
     if camera.viewport.is_some() {
         #[cfg(feature = "trace")]
@@ -85,5 +109,6 @@ pub fn main_transparent_pass_2d(
             timestamp_writes: None,
             occlusion_query_set: None,
         });
+        // 创建空渲染通道以重置视口
     }
 }

@@ -62,21 +62,36 @@ use bevy_image::{Image, TextureAtlasLayout, TextureAtlasPlugin};
 use bevy_math::Vec2;
 
 /// Adds support for 2D sprites.
+///
+/// 为应用添加 2D 精灵支持的插件。
+/// 此插件负责注册精灵相关的系统、组件和资源。
 #[derive(Default)]
 pub struct SpritePlugin;
 
 /// System set for sprite rendering.
+///
+/// 精灵渲染的系统集合。
+/// 用于组织和调度精灵相关的系统执行顺序。
 #[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
 pub enum SpriteSystems {
+    /// 提取精灵数据到渲染世界
     ExtractSprites,
+    /// 计算纹理切片（用于 9 切片缩放）
     ComputeSlices,
 }
 
 impl Plugin for SpritePlugin {
     fn build(&self, app: &mut App) {
+        // 如果 TextureAtlasPlugin 尚未注册，则注册它
         if !app.is_plugin_added::<TextureAtlasPlugin>() {
             app.add_plugins(TextureAtlasPlugin);
         }
+
+        // 添加边界计算系统：
+        // - calculate_bounds_2d: 计算 Sprite 和 Mesh2d 的 AABB
+        // - calculate_bounds_2d_sprite_mesh: 计算 SpriteMesh 的 AABB
+        // .chain() 表示按顺序执行
+        // .in_set() 将系统加入可见性计算集合
         app.add_systems(
             PostUpdate,
             (calculate_bounds_2d, calculate_bounds_2d_sprite_mesh)
@@ -84,12 +99,16 @@ impl Plugin for SpritePlugin {
                 .in_set(VisibilitySystems::CalculateBounds),
         );
 
+        // 当启用 bevy_text 特性时，注册 2D 文本相关系统
         #[cfg(feature = "bevy_text")]
         app.add_systems(
             PostUpdate,
             (
+                // 检测文本是否需要重新渲染
                 bevy_text::detect_text_needs_rerender::<Text2d>,
+                // 更新 2D 文本布局（在相机更新之后）
                 update_text2d_layout.after(bevy_camera::CameraUpdateSystems),
+                // 计算 2D 文本的边界
                 calculate_bounds_text2d.in_set(VisibilitySystems::CalculateBounds),
             )
                 .chain()
@@ -98,6 +117,7 @@ impl Plugin for SpritePlugin {
                 .after(bevy_app::AnimationSystems),
         );
 
+        // 当启用 bevy_picking 特性时，注册精灵拾取插件
         #[cfg(feature = "bevy_picking")]
         app.add_plugins(SpritePickingPlugin);
     }
@@ -109,6 +129,13 @@ impl Plugin for SpritePlugin {
 ///   and without a [`NoFrustumCulling`] component.
 ///
 /// Used in system set [`VisibilitySystems::CalculateBounds`].
+///
+/// 为以下实体计算并插入 [`Aabb`]（轴对齐包围盒）组件：
+/// - 具有 `Mesh2d` 组件的实体
+/// - 具有 `Sprite` 和 `Handle<Image>` 组件的实体
+///   且不具有 [`NoFrustumCulling`] 组件的实体
+///
+/// 此系统用于视锥体剔除（frustum culling），只有在视锥体内的实体才会被渲染。
 pub fn calculate_bounds_2d(
     mut commands: Commands,
     meshes: Res<Assets<Mesh>>,
@@ -152,6 +179,7 @@ pub fn calculate_bounds_2d(
     >,
 ) {
     // New meshes require inserting a component
+    // 处理新增的 Mesh2d 实体
     for (entity, mesh_handle) in &new_mesh_aabb {
         if let Some(mesh) = meshes.get(mesh_handle)
             && let Some(aabb) = mesh.compute_aabb()
@@ -161,6 +189,7 @@ pub fn calculate_bounds_2d(
     }
 
     // Updated meshes can take the fast path with parallel component mutation
+    // 处理更新的 Mesh2d 实体
     update_mesh_aabb
         .par_iter_mut()
         .for_each(|(mesh_handle, mut aabb)| {
@@ -170,6 +199,7 @@ pub fn calculate_bounds_2d(
         });
 
     // Sprite helper
+    // 计算精灵大小的辅助函数
     let sprite_size = |sprite: &Sprite| -> Option<Vec2> {
         sprite
             .custom_size
@@ -177,7 +207,6 @@ pub fn calculate_bounds_2d(
             .or_else(|| match &sprite.texture_atlas {
                 // We default to the texture size for regular sprites
                 None => images.get(&sprite.image).map(Image::size_f32),
-                // We default to the drawn rect for atlas sprites
                 Some(atlas) => atlas
                     .texture_rect(&atlases)
                     .map(|rect| rect.size().as_vec2()),
@@ -185,6 +214,7 @@ pub fn calculate_bounds_2d(
     };
 
     // New sprites require inserting a component
+    // 处理新增的 Sprite 实体
     for (size, (entity, anchor)) in new_sprite_aabb
         .iter()
         .filter_map(|(entity, sprite, anchor)| sprite_size(sprite).zip(Some((entity, anchor))))
@@ -197,6 +227,7 @@ pub fn calculate_bounds_2d(
     }
 
     // Updated sprites can take the fast path with parallel component mutation
+    // 处理更新的 Sprite 实体
     update_sprite_aabb
         .par_iter_mut()
         .for_each(|(sprite, mut aabb, anchor)| {
@@ -236,6 +267,7 @@ fn calculate_bounds_2d_sprite_mesh(
     >,
 ) {
     // Sprite helper
+    // 计算精灵大小的辅助函数
     let sprite_size = |sprite: &SpriteMesh| -> Option<Vec2> {
         sprite
             .custom_size
@@ -251,6 +283,7 @@ fn calculate_bounds_2d_sprite_mesh(
     };
 
     // New sprites require inserting a component
+    // 处理新增的 SpriteMesh 实体
     for (size, (entity, anchor)) in new_sprite_aabb
         .iter()
         .filter_map(|(entity, sprite, anchor)| sprite_size(sprite).zip(Some((entity, anchor))))
@@ -263,6 +296,7 @@ fn calculate_bounds_2d_sprite_mesh(
     }
 
     // Updated sprites can take the fast path with parallel component mutation
+    // 处理更新的 SpriteMesh 实体
     update_sprite_aabb
         .par_iter_mut()
         .for_each(|(sprite, mut aabb, anchor)| {

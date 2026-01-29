@@ -16,12 +16,16 @@ use core::marker::PhantomData;
 use tracing::info_span;
 use wgpu::CommandBuffer;
 
+/// 待处理命令缓冲区的内部结构
 #[derive(Default)]
 struct PendingCommandBuffersInner {
     buffers: Vec<CommandBuffer>,
+    // 命令缓冲区列表
     encoders: Vec<CommandEncoder>,
+    // 命令编码器列表
 }
 
+/// 待处理的命令缓冲区资源
 #[derive(Resource)]
 pub struct PendingCommandBuffers(WgpuWrapper<PendingCommandBuffersInner>);
 
@@ -32,14 +36,17 @@ impl Default for PendingCommandBuffers {
 }
 
 impl PendingCommandBuffers {
+    /// 添加命令缓冲区
     pub fn push(&mut self, buffers: impl IntoIterator<Item = CommandBuffer>) {
         self.0.buffers.extend(buffers);
     }
 
+    /// 添加命令编码器
     pub fn push_encoder(&mut self, encoder: CommandEncoder) {
         self.0.encoders.push(encoder);
     }
 
+    /// 取出所有命令缓冲区（并完成所有编码器）
     pub fn take(&mut self) -> Vec<CommandBuffer> {
         let encoders: Vec<_> = self.0.encoders.drain(..).collect();
         for encoder in encoders {
@@ -48,22 +55,29 @@ impl PendingCommandBuffers {
         core::mem::take(&mut self.0.buffers)
     }
 
+    /// 检查是否为空
     pub fn is_empty(&self) -> bool {
         self.0.buffers.is_empty() && self.0.encoders.is_empty()
     }
 
+    /// 获取待处理的命令缓冲区和编码器总数
     pub fn len(&self) -> usize {
         self.0.buffers.len() + self.0.encoders.len()
     }
 }
 
+/// 渲染上下文状态的内部结构
 #[derive(Default)]
 struct RenderContextStateInner {
     command_encoder: Option<CommandEncoder>,
+    // 命令编码器
     command_buffers: Vec<CommandBuffer>,
+    // 命令缓冲区列表
     render_device: Option<RenderDevice>,
+    // 渲染设备
 }
 
+/// 渲染上下文状态 - 管理渲染过程中的命令编码器和缓冲区
 pub struct RenderContextState(WgpuWrapper<RenderContextStateInner>);
 
 impl Default for RenderContextState {
@@ -73,12 +87,14 @@ impl Default for RenderContextState {
 }
 
 impl RenderContextState {
+    /// 刷新编码器 - 将编码器完成并添加到缓冲区列表
     fn flush_encoder(&mut self) {
         if let Some(encoder) = self.0.command_encoder.take() {
             self.0.command_buffers.push(encoder.finish());
         }
     }
 
+    /// 获取命令编码器（如果不存在则创建）
     fn command_encoder(&mut self) -> &mut CommandEncoder {
         let render_device = self
             .0
@@ -91,6 +107,7 @@ impl RenderContextState {
         })
     }
 
+    /// 完成所有命令并返回命令缓冲区列表
     pub fn finish(&mut self) -> Vec<CommandBuffer> {
         self.flush_encoder();
         core::mem::take(&mut self.0.command_buffers)

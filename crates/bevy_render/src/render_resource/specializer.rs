@@ -1,10 +1,14 @@
+// 导入 bevy_material 描述符类型
 use bevy_material::descriptor::{
     CachedComputePipelineId, CachedRenderPipelineId, ComputePipelineDescriptor,
     RenderPipelineDescriptor,
 };
 
+// 导入超级模块类型
 use super::{ComputePipeline, PipelineCache, RenderPipeline};
+// 导入 Bevy 错误类型
 use bevy_ecs::error::BevyError;
+// 导入集合类型
 use bevy_platform::{
     collections::{
         hash_map::{Entry, VacantEntry},
@@ -12,10 +16,14 @@ use bevy_platform::{
     },
     hash::FixedHasher,
 };
+// 导入核心类型
 use core::{hash::Hash, marker::PhantomData};
+// 导入日志类型
 use tracing::error;
+// 导入元组处理宏
 use variadics_please::all_tuples;
 
+// 导出特化器相关宏
 pub use bevy_render_macros::{Specializer, SpecializerKey};
 
 /// Defines a type that is able to be "specialized" and cached by creating and transforming
@@ -23,13 +31,21 @@ pub use bevy_render_macros::{Specializer, SpecializerKey};
 /// likely will not have much utility for other types.
 ///
 /// See docs on [`Specializer`] for more info.
+/// 定义一个可以被"特化"并缓存的类型
+/// 
+/// 该特性为 [`RenderPipeline`] 和 [`ComputePipeline`] 实现，用于创建和转换其描述符类型
 pub trait Specializable {
     type Descriptor: PartialEq + Clone + Send + Sync;
+    // 描述符类型
     type CachedId: Clone + Send + Sync;
+    // 缓存 ID 类型
     fn queue(pipeline_cache: &PipelineCache, descriptor: Self::Descriptor) -> Self::CachedId;
+    // 将描述符加入队列
     fn get_descriptor(pipeline_cache: &PipelineCache, id: Self::CachedId) -> &Self::Descriptor;
+    // 获取描述符
 }
 
+/// RenderPipeline 的 Specializable 实现
 impl Specializable for RenderPipeline {
     type Descriptor = RenderPipelineDescriptor;
     type CachedId = CachedRenderPipelineId;
@@ -46,6 +62,7 @@ impl Specializable for RenderPipeline {
     }
 }
 
+/// ComputePipeline 的 Specializable 实现
 impl Specializable for ComputePipeline {
     type Descriptor = ComputePipelineDescriptor;
 

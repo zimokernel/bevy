@@ -1,15 +1,23 @@
 use crate::{
     batching::gpu_preprocessing::{GpuPreprocessingMode, GpuPreprocessingSupport},
+    // GPU 预处理模式和支持
     extract_component::{ExtractComponent, ExtractComponentPlugin},
+    // 组件提取插件
     extract_resource::{ExtractResource, ExtractResourcePlugin},
+    // 资源提取插件
     render_asset::RenderAssets,
+    // 渲染资源
     render_resource::TextureView,
+    // 纹理视图
     sync_world::{RenderEntity, SyncToRenderWorld},
+    // 同步到渲染世界
     texture::{GpuImage, ManualTextureViews},
+    // GPU 图像和手动纹理视图
     view::{
         ColorGrading, ExtractedView, ExtractedWindows, Hdr, Msaa, NoIndirectDrawing,
         RenderVisibleEntities, RetainedViewEntity, ViewUniformOffset,
     },
+    // 视图相关组件
     Extract, ExtractSchedule, Render, RenderApp, RenderSystems,
 };
 
@@ -17,50 +25,84 @@ use bevy_app::{App, Plugin, PostStartup, PostUpdate};
 use bevy_asset::{AssetEvent, AssetEventSystems, AssetId, Assets};
 use bevy_camera::{
     primitives::Frustum,
+    // 视锥体
     visibility::{self, RenderLayers, VisibleEntities},
+    // 可见性系统
     Camera, Camera2d, Camera3d, CameraMainTextureUsages, CameraOutputMode, CameraUpdateSystems,
+    // 相机相关组件
     ClearColor, ClearColorConfig, Exposure, ManualTextureViewHandle, MsaaWriteback,
+    // 清除颜色、曝光等
     NormalizedRenderTarget, Projection, RenderTarget, RenderTargetInfo, Viewport,
+    // 渲染目标和视口
 };
 use bevy_derive::{Deref, DerefMut};
 use bevy_ecs::{
     change_detection::DetectChanges,
+    // 变更检测
     component::Component,
+    // 组件
     entity::{ContainsEntity, Entity},
+    // 实体
     error::BevyError,
+    // 错误类型
     lifecycle::HookContext,
+    // 生命周期钩子上下文
     message::MessageReader,
+    // 消息读取器
     prelude::With,
+    // 查询过滤器
     query::{Has, QueryItem},
+    // 查询相关
     reflect::ReflectComponent,
+    // 反射组件
     resource::Resource,
+    // 资源
     schedule::{InternedScheduleLabel, IntoScheduleConfigs, ScheduleLabel},
+    // 调度相关
     system::{Commands, Query, Res, ResMut},
+    // 系统参数
     world::DeferredWorld,
+    // 延迟世界
 };
 use bevy_image::Image;
+// 图像类型
 use bevy_math::{uvec2, vec2, Mat4, URect, UVec2, UVec4, Vec2};
+// 数学类型
 use bevy_platform::collections::{HashMap, HashSet};
+// 集合类型
 use bevy_reflect::prelude::*;
+// 反射
 use bevy_transform::components::GlobalTransform;
+// 全局变换
 use bevy_window::{PrimaryWindow, Window, WindowCreated, WindowResized, WindowScaleFactorChanged};
+// 窗口相关
 use tracing::warn;
+// 日志警告
 use wgpu::TextureFormat;
+// WGPU 纹理格式
 
+/// 相机插件 - 负责相机系统的初始化和管理
 #[derive(Default)]
 pub struct CameraPlugin;
 
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         app.register_required_components::<Camera, Msaa>()
+            // 注册相机必需的 Msaa 组件
             .register_required_components::<Camera, SyncToRenderWorld>()
+            // 注册相机必需的 SyncToRenderWorld 组件
             .register_required_components::<Camera3d, ColorGrading>()
+            // 注册 3D 相机必需的 ColorGrading 组件
             .register_required_components::<Camera3d, Exposure>()
+            // 注册 3D 相机必需的 Exposure 组件
             .add_plugins((
                 ExtractResourcePlugin::<ClearColor>::default(),
+                // 添加清除颜色提取插件
                 ExtractComponentPlugin::<CameraMainTextureUsages>::default(),
+                // 添加相机主纹理用法提取插件
             ))
             .add_systems(PostStartup, camera_system.in_set(CameraUpdateSystems))
+            // 在启动后添加相机系统
             .add_systems(
                 PostUpdate,
                 camera_system
@@ -68,19 +110,25 @@ impl Plugin for CameraPlugin {
                     .before(AssetEventSystems)
                     .before(visibility::update_frusta),
             );
+            // 在更新后添加相机系统
         app.world_mut()
             .register_component_hooks::<Camera>()
             .on_add(warn_on_no_render_graph);
+            // 注册相机组件的添加钩子
 
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app
                 .init_resource::<SortedCameras>()
+                // 初始化排序相机资源
                 .add_systems(ExtractSchedule, extract_cameras)
+                // 添加相机提取系统
                 .add_systems(Render, sort_cameras.in_set(RenderSystems::ManageViews));
+                // 添加相机排序系统
         }
     }
 }
 
+/// 当相机没有配置渲染图时发出警告
 fn warn_on_no_render_graph(world: DeferredWorld, HookContext { entity, caller, .. }: HookContext) {
     if !world.entity(entity).contains::<CameraRenderGraph>() {
         warn!("{}Entity {entity} has a `Camera` component, but it doesn't have a render graph configured. Usually, adding a `Camera2d` or `Camera3d` component will work.
@@ -88,6 +136,7 @@ fn warn_on_no_render_graph(world: DeferredWorld, HookContext { entity, caller, .
     }
 }
 
+/// ClearColor 的资源提取实现
 impl ExtractResource for ClearColor {
     type Source = Self;
 
@@ -95,6 +144,7 @@ impl ExtractResource for ClearColor {
         source.clone()
     }
 }
+/// CameraMainTextureUsages 的组件提取实现
 impl ExtractComponent for CameraMainTextureUsages {
     type QueryData = &'static Self;
     type QueryFilter = ();
@@ -113,6 +163,7 @@ impl ExtractComponent for Camera2d {
         Some(item.clone())
     }
 }
+/// Camera3d 的组件提取实现
 impl ExtractComponent for Camera3d {
     type QueryData = &'static Self;
     type QueryFilter = With<Camera>;
@@ -124,6 +175,7 @@ impl ExtractComponent for Camera3d {
 }
 
 /// Configures the render schedule to be run for a given [`Camera`] entity.
+/// 配置要为给定的 [`Camera`] 实体运行的渲染调度
 #[derive(Component, Debug, Deref, DerefMut, Reflect, Clone)]
 #[reflect(opaque)]
 #[reflect(Component, Debug, Clone)]
@@ -131,18 +183,21 @@ pub struct CameraRenderGraph(pub InternedScheduleLabel);
 
 impl CameraRenderGraph {
     /// Creates a new [`CameraRenderGraph`] from a schedule label.
+    /// 从调度标签创建新的 [`CameraRenderGraph`]
     #[inline]
     pub fn new<T: ScheduleLabel>(schedule: T) -> Self {
         Self(schedule.intern())
     }
 
     /// Sets the schedule.
+    /// 设置调度
     #[inline]
     pub fn set<T: ScheduleLabel>(&mut self, schedule: T) {
         self.0 = schedule.intern();
     }
 }
 
+/// 规范化渲染目标的扩展特性
 pub trait NormalizedRenderTargetExt {
     fn get_texture_view<'a>(
         &self,
@@ -299,6 +354,13 @@ pub enum MissingRenderTargetInfoError {
 ///
 /// [`OrthographicProjection`]: bevy_camera::OrthographicProjection
 /// [`PerspectiveProjection`]: bevy_camera::PerspectiveProjection
+/// 相机系统 - 处理相机的更新和渲染目标信息
+/// 
+/// 该系统负责:
+/// 1. 监听窗口和图像资产的变化
+/// 2. 更新相机的渲染目标信息
+/// 3. 调整视口大小以适应 DPI 变化
+/// 4. 更新相机投影矩阵
 pub fn camera_system(
     mut window_resized_reader: MessageReader<WindowResized>,
     mut window_created_reader: MessageReader<WindowCreated>,
@@ -311,6 +373,7 @@ pub fn camera_system(
     mut cameras: Query<(&mut Camera, &RenderTarget, &mut Projection)>,
 ) -> Result<(), BevyError> {
     let primary_window = primary_window.iter().next();
+    // 获取主窗口实体
 
     let mut changed_window_ids = <HashSet<_>>::default();
     changed_window_ids.extend(window_created_reader.read().map(|event| event.window));
@@ -320,6 +383,7 @@ pub fn camera_system(
         .map(|event| event.window)
         .collect();
     changed_window_ids.extend(scale_factor_changed_window_ids.clone());
+    // 收集所有发生变化的窗口 ID
 
     let changed_image_handles: HashSet<&AssetId<Image>> = image_asset_event_reader
         .read()
@@ -328,12 +392,14 @@ pub fn camera_system(
             _ => None,
         })
         .collect();
+    // 收集所有发生变化的图像资产
 
     for (mut camera, render_target, mut camera_projection) in &mut cameras {
         let mut viewport_size = camera
             .viewport
             .as_ref()
             .map(|viewport| viewport.physical_size);
+        // 获取视口的物理大小
 
         if let Some(normalized_target) = render_target.normalize(primary_window)
             && (normalized_target.is_changed(&changed_window_ids, &changed_image_handles)
@@ -347,6 +413,7 @@ pub fn camera_system(
                 &images,
                 &manual_texture_views,
             )?;
+            // 获取新的渲染目标信息
             // Check for the scale factor changing, and resize the viewport if needed.
             // This can happen when the window is moved between monitors with different DPIs.
             // Without this, the viewport will take a smaller portion of the window moved to
@@ -366,12 +433,17 @@ pub fn camera_system(
                     viewport_size = Some(viewport.physical_size);
                 }
             }
+            // 检查缩放因子变化,并在需要时调整视口大小
+            // 这可能发生在窗口在具有不同 DPI 的显示器之间移动时
+            // 如果没有此调整,视口在移动到高 DPI 显示器时会占据较小的窗口部分
             // This check is needed because when changing WindowMode to Fullscreen, the viewport may have invalid
             // arguments due to a sudden change on the window size to a lower value.
             // If the size of the window is lower, the viewport will match that lower value.
             if let Some(viewport) = &mut camera.viewport {
                 viewport.clamp_to_size(new_computed_target_info.physical_size);
             }
+            // 此检查是必要的,因为当 WindowMode 更改为全屏时,由于窗口大小突然变为较小值,视口可能具有无效参数
+            // 如果窗口大小较小,视口将匹配该较小值
             camera.computed.target_info = Some(new_computed_target_info);
             if let Some(size) = camera.logical_viewport_size()
                 && size.x != 0.0
@@ -383,35 +455,52 @@ pub fn camera_system(
                     None => camera_projection.get_clip_from_view(),
                 }
             }
+            // 更新相机投影和裁剪矩阵
         }
 
         if camera.computed.old_viewport_size != viewport_size {
             camera.computed.old_viewport_size = viewport_size;
         }
+        // 更新旧视口大小
 
         if camera.computed.old_sub_camera_view != camera.sub_camera_view {
             camera.computed.old_sub_camera_view = camera.sub_camera_view;
         }
+        // 更新旧子相机视图
     }
     Ok(())
 }
 
+/// 提取的相机组件 - 用于渲染世界中的相机数据
 #[derive(Component, Debug)]
 pub struct ExtractedCamera {
     pub target: Option<NormalizedRenderTarget>,
+    // 渲染目标
     pub physical_viewport_size: Option<UVec2>,
+    // 视口的物理大小
     pub physical_target_size: Option<UVec2>,
+    // 目标的物理大小
     pub viewport: Option<Viewport>,
+    // 视口
     pub schedule: InternedScheduleLabel,
+    // 要运行的调度
     pub order: isize,
+    // 渲染顺序
     pub output_mode: CameraOutputMode,
+    // 输出模式
     pub msaa_writeback: MsaaWriteback,
+    // MSAA 回写设置
     pub clear_color: ClearColorConfig,
+    // 清除颜色配置
     pub sorted_camera_index_for_target: usize,
+    // 目标的相机排序索引
     pub exposure: f32,
+    // 曝光值
     pub hdr: bool,
+    // 是否启用 HDR
 }
 
+/// 相机提取系统 - 将相机数据从主世界提取到渲染世界
 pub fn extract_cameras(
     mut commands: Commands,
     query: Extract<
@@ -599,16 +688,23 @@ pub fn extract_cameras(
 }
 
 /// Cameras sorted by their order field. This is updated in the [`sort_cameras`] system.
+/// 按顺序字段排序的相机.这在 [`sort_cameras`] 系统中更新
 #[derive(Resource, Default)]
 pub struct SortedCameras(pub Vec<SortedCamera>);
 
+/// 排序后的相机数据
 pub struct SortedCamera {
     pub entity: Entity,
+    // 相机实体
     pub order: isize,
+    // 渲染顺序
     pub target: Option<NormalizedRenderTarget>,
+    // 渲染目标
     pub hdr: bool,
+    // 是否启用 HDR
 }
 
+/// 相机排序系统 - 按顺序字段对相机进行排序
 pub fn sort_cameras(
     mut sorted_cameras: ResMut<SortedCameras>,
     mut cameras: Query<(Entity, &mut ExtractedCamera)>,
@@ -623,6 +719,7 @@ pub fn sort_cameras(
         });
     }
     // sort by order and ensure within an order, RenderTargets of the same type are packed together
+    // 按顺序排序,并确保在同一顺序内,相同类型的 RenderTarget 被打包在一起
     sorted_cameras
         .0
         .sort_by(|c1, c2| (c1.order, &c1.target).cmp(&(c2.order, &c2.target)));

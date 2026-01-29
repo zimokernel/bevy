@@ -13,34 +13,49 @@ use crate::{Anchor, SpriteImageMode};
 /// Mesh backend instead of the Sprite backend.
 ///
 /// The only API difference is the added [`alpha mode`](SpriteMesh::alpha_mode).
+///
+/// 这是 [`Sprite`](crate::sprite::Sprite) 的副本，但使用 Mesh 后端而不是 Sprite 后端。
+/// 唯一的 API 区别是添加了 [`alpha mode`](SpriteMesh::alpha_mode) 字段。
 #[derive(Component, Debug, Default, Clone, Reflect, PartialEq)]
 #[require(Transform, Visibility, VisibilityClass, Anchor)]
 #[reflect(Component, Default, Debug, Clone)]
 pub struct SpriteMesh {
     /// The image used to render the sprite
+    /// 用于渲染精灵的图像
     pub image: Handle<Image>,
     /// The (optional) texture atlas used to render the sprite
+    /// （可选）用于渲染精灵的纹理图集
     pub texture_atlas: Option<TextureAtlas>,
     /// The sprite's color tint
+    /// 精灵的颜色色调
     pub color: Color,
     /// Flip the sprite along the `X` axis
+    /// 沿 X 轴翻转精灵
     pub flip_x: bool,
     /// Flip the sprite along the `Y` axis
+    /// 沿 Y 轴翻转精灵
     pub flip_y: bool,
     /// An optional custom size for the sprite that will be used when rendering, instead of the size
     /// of the sprite's image
+    /// 精灵的可选自定义大小，渲染时将使用此大小而不是精灵图像的大小
     pub custom_size: Option<Vec2>,
     /// An optional rectangle representing the region of the sprite's image to render, instead of rendering
     /// the full image. This is an easy one-off alternative to using a [`TextureAtlas`].
     ///
     /// When used with a [`TextureAtlas`], the rect
     /// is offset by the atlas's minimal (top-left) corner position.
+    /// 表示要渲染的精灵图像区域的可选矩形，而不是渲染整个图像。
+    /// 这是使用 [`TextureAtlas`] 的简单替代方案。
+    /// 当与 [`TextureAtlas`] 一起使用时，矩形会根据图集的最小（左上角）角位置进行偏移。
     pub rect: Option<Rect>,
     /// How the sprite's image will be scaled.
+    /// 精灵图像的缩放方式。
     pub image_mode: SpriteImageMode,
     /// The sprite's alpha mode, defaulting to `Mask(0.5)`.
     /// If you wish to render a sprite with translucent pixels,
     /// set it to `Blend` instead (significantly worse for performance).
+    /// 精灵的 alpha 模式，默认为 `Mask(0.5)`。
+    /// 如果要渲染具有半透明像素的精灵，请将其设置为 `Blend`（性能会显著降低）。
     pub alpha_mode: SpriteAlphaMode,
 }
 
@@ -61,6 +76,7 @@ impl Eq for SpriteMesh {}
 
 impl SpriteMesh {
     /// Create a Sprite with a custom size
+    /// 创建一个具有自定义大小的精灵
     pub fn sized(custom_size: Vec2) -> Self {
         SpriteMesh {
             custom_size: Some(custom_size),
@@ -69,6 +85,7 @@ impl SpriteMesh {
     }
 
     /// Create a sprite from an image
+    /// 从图像创建一个精灵
     pub fn from_image(image: Handle<Image>) -> Self {
         Self {
             image,
@@ -77,6 +94,7 @@ impl SpriteMesh {
     }
 
     /// Create a sprite from an image, with an associated texture atlas
+    /// 从图像和关联的纹理图集创建一个精灵
     pub fn from_atlas_image(image: Handle<Image>, atlas: TextureAtlas) -> Self {
         Self {
             image,
@@ -86,6 +104,7 @@ impl SpriteMesh {
     }
 
     /// Create a sprite from a solid color
+    /// 从纯色创建一个精灵
     pub fn from_color(color: impl Into<Color>, size: Vec2) -> Self {
         Self {
             color: color.into(),

@@ -52,8 +52,26 @@ pub struct SpritePipeline {
     shader: Handle<Shader>,
 }
 
+/// 初始化精灵渲染管线
+/// 
+/// 该系统在应用启动时运行，负责创建精灵渲染所需的管线资源，包括：
+/// 1. 视图绑定组布局（View Bind Group Layout）
+/// 2. 材质绑定组布局（Material Bind Group Layout）
+/// 3. 精灵着色器
+/// 
+/// 这些资源被存储为全局资源，供后续的精灵渲染系统使用。
 pub fn init_sprite_pipeline(mut commands: Commands, asset_server: Res<AssetServer>) {
+    // 获取色调映射 LUT（查找表）的绑定组布局条目
+    // 色调映射用于将 HDR 颜色转换为 LDR 颜色
     let tonemapping_lut_entries = get_lut_bind_group_layout_entries();
+    
+    // 创建视图绑定组布局：
+    // - 名称："sprite_view_layout"
+    // - 可见性：顶点和片段着色器阶段
+    // - 绑定内容：
+    //   1. ViewUniform 统一缓冲区（相机视图矩阵等）
+    //   2. 色调映射 LUT 纹理
+    //   3. 色调映射 LUT 采样器
     let view_layout = BindGroupLayoutDescriptor::new(
         "sprite_view_layout",
         &BindGroupLayoutEntries::sequential(
@@ -66,6 +84,12 @@ pub fn init_sprite_pipeline(mut commands: Commands, asset_server: Res<AssetServe
         ),
     );
 
+    // 创建材质绑定组布局：
+    // - 名称："sprite_material_layout"
+    // - 可见性：片段着色器阶段
+    // - 绑定内容：
+    //   1. 精灵纹理（2D 纹理，浮点类型，可过滤）
+    //   2. 纹理采样器（过滤模式）
     let material_layout = BindGroupLayoutDescriptor::new(
         "sprite_material_layout",
         &BindGroupLayoutEntries::sequential(
@@ -77,6 +101,8 @@ pub fn init_sprite_pipeline(mut commands: Commands, asset_server: Res<AssetServe
         ),
     );
 
+    // 将 SpritePipeline 资源插入到应用中
+    // 该资源包含了精灵渲染所需的所有管线布局和着色器
     commands.insert_resource(SpritePipeline {
         view_layout,
         material_layout,
@@ -560,6 +586,16 @@ pub fn queue_sprites(
     }
 }
 
+/// 准备精灵视图绑定组
+/// 
+/// 该系统在渲染准备阶段运行，负责为每个视图创建精灵视图绑定组。
+/// 
+/// 视图绑定组包含：
+/// 1. 视图统一缓冲区（View Uniform Buffer）：包含相机视图矩阵、投影矩阵等
+/// 2. 色调映射 LUT（查找表）纹理：用于 HDR 到 LDR 的颜色转换
+/// 3. 色调映射 LUT 采样器：用于采样 LUT 纹理
+/// 
+/// 这些绑定组被用于精灵着色器，确保每个视图都有正确的相机和色调映射配置。
 pub fn prepare_sprite_view_bind_groups(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
@@ -571,19 +607,30 @@ pub fn prepare_sprite_view_bind_groups(
     images: Res<RenderAssets<GpuImage>>,
     fallback_image: Res<FallbackImage>,
 ) {
+    // 如果视图统一缓冲区没有绑定，则提前返回
     let Some(view_binding) = view_uniforms.uniforms.binding() else {
         return;
     };
 
+    // 遍历所有提取的视图
     for (entity, tonemapping) in &views {
+        // 获取色调映射 LUT 的绑定
+        // LUT 用于将 HDR 颜色转换为 LDR 颜色
         let lut_bindings =
             get_lut_bindings(&images, &tonemapping_luts, tonemapping, &fallback_image);
+        
+        // 创建视图绑定组
         let view_bind_group = render_device.create_bind_group(
             "mesh2d_view_bind_group",
             &pipeline_cache.get_bind_group_layout(&sprite_pipeline.view_layout),
-            &BindGroupEntries::sequential((view_binding.clone(), lut_bindings.0, lut_bindings.1)),
+            &BindGroupEntries::sequential((
+                view_binding.clone(),  // 视图统一缓冲区绑定
+                lut_bindings.0,        // LUT 纹理绑定
+                lut_bindings.1,        // LUT 采样器绑定
+            )),
         );
 
+        // 将视图绑定组插入到视图实体中
         commands.entity(entity).insert(SpriteViewBindGroup {
             value: view_bind_group,
         });

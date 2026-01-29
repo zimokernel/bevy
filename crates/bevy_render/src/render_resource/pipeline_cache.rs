@@ -27,30 +27,35 @@ use std::sync::{Mutex, PoisonError};
 use tracing::error;
 use wgpu::{PipelineCompilationOptions, VertexBufferLayout as RawVertexBufferLayout};
 
-/// A pipeline defining the data layout and shader logic for a specific GPU task.
+/// 管线枚举 - 定义特定GPU任务的数据布局和着色器逻辑
 ///
-/// Used to store a heterogenous collection of render and compute pipelines together.
+/// 用于存储渲染管线和计算管线的异构集合
 #[derive(Debug)]
 pub enum Pipeline {
     RenderPipeline(RenderPipeline),
     ComputePipeline(ComputePipeline),
 }
 
+/// 缓存的管线结构体
+/// 
+/// 包含管线描述符和当前状态
 pub struct CachedPipeline {
     pub descriptor: PipelineDescriptor,
     pub state: CachedPipelineState,
 }
 
-/// State of a cached pipeline inserted into a [`PipelineCache`].
+/// 缓存管线的状态枚举
+/// 
+/// 表示插入到 PipelineCache 中的管线的当前状态
 #[derive(Debug)]
 pub enum CachedPipelineState {
-    /// The pipeline GPU object is queued for creation.
+    /// 管线GPU对象已排队等待创建
     Queued,
-    /// The pipeline GPU object is being created.
+    /// 管线GPU对象正在创建中（异步任务）
     Creating(Task<Result<Pipeline, ShaderCacheError>>),
-    /// The pipeline GPU object was created successfully and is available (allocated on the GPU).
+    /// 管线GPU对象已成功创建并可用（已在GPU上分配）
     Ok(Pipeline),
-    /// An error occurred while trying to create the pipeline GPU object.
+    /// 创建管线GPU对象时发生错误
     Err(ShaderCacheError),
 }
 
@@ -79,13 +84,34 @@ impl CachedPipelineState {
     }
 }
 
+/// 管线布局缓存的键类型
+/// 
+/// 由绑定组布局ID列表和推送常量范围组成
 type LayoutCacheKey = (Vec<BindGroupLayoutId>, Vec<PushConstantRange>);
+
+/// 管线布局缓存
+/// 
+/// 用于缓存和重用 PipelineLayout，避免重复创建相同的布局
 #[derive(Default)]
 struct LayoutCache {
     layouts: HashMap<LayoutCacheKey, Arc<WgpuWrapper<PipelineLayout>>>,
 }
 
 impl LayoutCache {
+    /// 获取或创建管线布局
+    /// 
+    /// 该方法实现了管线布局的缓存机制：
+    /// 1. 首先根据绑定组布局ID和推送常量范围查找缓存
+    /// 2. 如果找到，直接返回缓存的布局
+    /// 3. 如果未找到，创建新的 PipelineLayout 并缓存
+    /// 
+    /// 参数：
+    /// - render_device: 渲染设备引用
+    /// - bind_group_layouts: 绑定组布局数组
+    /// - push_constant_ranges: 推送常量范围
+    /// 
+    /// 返回：
+    /// - Arc<WgpuWrapper<PipelineLayout>>: 管线布局的原子引用计数指针
     fn get(
         &mut self,
         render_device: &RenderDevice,
@@ -112,11 +138,26 @@ impl LayoutCache {
     }
 }
 
+/// 加载并编译着色器模块
+/// 
+/// 该函数负责：
+/// 1. 将不同格式的着色器源（SPIR-V、WGSL、Naga）转换为统一格式
+/// 2. 创建着色器模块（可选验证）
+/// 3. 捕获并返回着色器编译错误
+/// 
+/// 参数：
+/// - render_device: 渲染设备引用
+/// - shader_source: 着色器源（支持多种格式）
+/// - validate_shader: 是否启用着色器验证
+/// 
+/// 返回：
+/// - Result<WgpuWrapper<ShaderModule>, ShaderCacheError>: 着色器模块或错误
 fn load_module(
     render_device: &RenderDevice,
     shader_source: ShaderCacheSource,
     validate_shader: &ValidateShader,
 ) -> Result<WgpuWrapper<ShaderModule>, ShaderCacheError> {
+    // 转换着色器源格式
     let shader_source = match shader_source {
         #[cfg(feature = "shader_format_spirv")]
         ShaderCacheSource::SpirV(data) => wgpu::util::make_spirv(data),
@@ -128,33 +169,32 @@ fn load_module(
         #[cfg(not(feature = "decoupled_naga"))]
         ShaderCacheSource::Naga(src) => ShaderSource::Naga(Cow::Owned(src)),
     };
+    
     let module_descriptor = ShaderModuleDescriptor {
         label: None,
         source: shader_source,
     };
 
+    // 启用错误捕获范围
     render_device
         .wgpu_device()
         .push_error_scope(wgpu::ErrorFilter::Validation);
 
+    // 创建着色器模块（根据验证选项选择不同路径）
     let shader_module = WgpuWrapper::new(match validate_shader {
         ValidateShader::Enabled => {
             render_device.create_and_validate_shader_module(module_descriptor)
         }
-        // SAFETY: we are interfacing with shader code, which may contain undefined behavior,
-        // such as indexing out of bounds.
-        // The checks required are prohibitively expensive and a poor default for game engines.
+        // 禁用验证时使用不安全的快速路径（性能优化）
         ValidateShader::Disabled => unsafe {
             render_device.create_shader_module(module_descriptor)
         },
     });
 
+    // 检查并返回错误
     let error = render_device.wgpu_device().pop_error_scope();
 
-    // `now_or_never` will return Some if the future is ready and None otherwise.
-    // On native platforms, wgpu will yield the error immediately while on wasm it may take longer since the browser APIs are asynchronous.
-    // So to keep the complexity of the ShaderCache low, we will only catch this error early on native platforms,
-    // and on wasm the error will be handled by wgpu and crash the application.
+    // 在原生平台上立即捕获错误，在 WASM 上可能需要更长时间
     if let Some(Some(wgpu::Error::Validation { description, .. })) =
         bevy_tasks::futures::now_or_never(error)
     {
@@ -164,12 +204,28 @@ fn load_module(
     Ok(shader_module)
 }
 
+/// 绑定组布局缓存
+/// 
+/// 用于缓存和重用 BindGroupLayout，避免重复创建相同的绑定组布局
 #[derive(Default)]
 struct BindGroupLayoutCache {
     bgls: HashMap<BindGroupLayoutDescriptor, BindGroupLayout>,
 }
 
 impl BindGroupLayoutCache {
+    /// 获取或创建绑定组布局
+    /// 
+    /// 该方法实现了绑定组布局的缓存机制：
+    /// 1. 首先根据 BindGroupLayoutDescriptor 查找缓存
+    /// 2. 如果找到，直接返回缓存的布局
+    /// 3. 如果未找到，创建新的 BindGroupLayout 并缓存
+    /// 
+    /// 参数：
+    /// - render_device: 渲染设备引用
+    /// - descriptor: 绑定组布局描述符
+    /// 
+    /// 返回：
+    /// - BindGroupLayout: 绑定组布局
     fn get(
         &mut self,
         render_device: &RenderDevice,
@@ -198,17 +254,42 @@ impl BindGroupLayoutCache {
 ///
 /// [`RenderSystems::Render`]: crate::RenderSystems::Render
 #[derive(Resource)]
+/// 渲染管线和计算管线的缓存管理器
+/// 
+/// 该缓存负责：
+/// 1. 存储已创建的 GPU 管线对象（渲染管线和计算管线）
+/// 2. 管理待创建的管线队列
+/// 3. 缓存和重用着色器模块、管线布局和绑定组布局
+/// 4. 支持异步管线编译（避免阻塞主线程）
+/// 
+/// 管线创建流程：
+/// 1. 调用 queue_render_pipeline 或 queue_compute_pipeline 将管线加入队列
+/// 2. 在 RenderSystems::Render 阶段之前，prepare_pipelines 会处理所有排队的管线
+/// 3. 管线会经历 Queued -> Creating -> Ok/Err 的状态转换
+/// 4. 完成后可以通过 get_render_pipeline 或 get_compute_pipeline 获取 GPU 管线
+/// 
+/// 注意：该缓存不会自动对相同的管线进行去重，用户需要避免重复插入相同的管线
+/// 以避免浪费 GPU 资源。
+#[derive(Resource)]
 pub struct PipelineCache {
+    /// 管线布局缓存（线程安全）
     layout_cache: Arc<Mutex<LayoutCache>>,
+    /// 绑定组布局缓存（线程安全）
     bindgroup_layout_cache: Arc<Mutex<BindGroupLayoutCache>>,
+    /// 着色器缓存（线程安全）
     shader_cache: Arc<Mutex<ShaderCache<WgpuWrapper<ShaderModule>, RenderDevice>>>,
+    /// 渲染设备引用
     device: RenderDevice,
+    /// 所有已缓存的管线
     pipelines: Vec<CachedPipeline>,
+    /// 等待中的管线 ID 集合
     waiting_pipelines: HashSet<CachedPipelineId>,
+    /// 新加入的管线队列（线程安全）
     new_pipelines: Mutex<Vec<CachedPipeline>>,
+    /// 全局着色器定义（影响所有着色器编译）
     global_shader_defs: Vec<ShaderDefVal>,
-    /// If `true`, disables asynchronous pipeline compilation.
-    /// This has no effect on macOS, wasm, or without the `multi_threaded` feature.
+    /// 如果为 true，禁用异步管线编译
+    /// 在 macOS、wasm 或没有 multi_threaded 特性时无效
     synchronous_pipeline_compilation: bool,
 }
 
@@ -224,12 +305,28 @@ impl PipelineCache {
     }
 
     /// Create a new pipeline cache associated with the given render device.
+    /// 创建新的管线缓存
+    /// 
+    /// 该方法会：
+    /// 1. 初始化全局着色器定义（根据平台特性）
+    /// 2. 创建着色器缓存
+    /// 3. 初始化所有内部缓存结构
+    /// 
+    /// 参数：
+    /// - device: 渲染设备
+    /// - render_adapter: 渲染适配器
+    /// - synchronous_pipeline_compilation: 是否同步编译管线
+    /// 
+    /// 返回：
+    /// - Self: 新创建的 PipelineCache 实例
     pub fn new(
         device: RenderDevice,
         render_adapter: RenderAdapter,
         synchronous_pipeline_compilation: bool,
     ) -> Self {
         let mut global_shader_defs = Vec::new();
+        
+        // WebGL 平台特定的全局着色器定义
         #[cfg(all(feature = "webgl", target_arch = "wasm32", not(feature = "webgpu")))]
         {
             global_shader_defs.push("NO_ARRAY_TEXTURES_SUPPORT".into());
@@ -237,16 +334,19 @@ impl PipelineCache {
             global_shader_defs.push("SIXTEEN_BYTE_ALIGNMENT".into());
         }
 
+        // 模拟器平台特定的全局着色器定义
         if cfg!(target_abi = "sim") {
             global_shader_defs.push("NO_CUBE_ARRAY_TEXTURES_SUPPORT".into());
         }
 
+        // 添加存储缓冲区绑定数量的全局定义
         global_shader_defs.push(ShaderDefVal::UInt(
             String::from("AVAILABLE_STORAGE_BUFFER_BINDINGS"),
             device.limits().max_storage_buffers_per_shader_stage,
         ));
 
         Self {
+            // 初始化着色器缓存（线程安全）
             shader_cache: Arc::new(Mutex::new(ShaderCache::new(
                 device.features(),
                 render_adapter.get_downlevel_capabilities().flags,
@@ -266,9 +366,18 @@ impl PipelineCache {
     /// Get the state of a cached render pipeline.
     ///
     /// See [`PipelineCache::queue_render_pipeline()`].
+    /// 获取缓存的渲染管线状态
+    /// 
+    /// 如果管线 ID 不在 `pipelines` 中，则说明它在 `new_pipelines` 中排队
+    /// 
+    /// 参数：
+    /// - id: 缓存的渲染管线 ID
+    /// 
+    /// 返回：
+    /// - &CachedPipelineState: 管线状态引用
     #[inline]
     pub fn get_render_pipeline_state(&self, id: CachedRenderPipelineId) -> &CachedPipelineState {
-        // If the pipeline id isn't in `pipelines`, it's queued in `new_pipelines`
+        // 如果管线 ID 不在 `pipelines` 中，则说明它在 `new_pipelines` 中排队
         self.pipelines
             .get(id.id())
             .map_or(&CachedPipelineState::Queued, |pipeline| &pipeline.state)
@@ -384,15 +493,33 @@ impl PipelineCache {
     ///
     /// [`get_render_pipeline_state()`]: PipelineCache::get_render_pipeline_state
     /// [`get_render_pipeline()`]: PipelineCache::get_render_pipeline
+    /// 将渲染管线插入缓存并排队等待创建
+    /// 
+    /// 该方法会：
+    /// 1. 为新管线分配唯一 ID
+    /// 2. 将管线描述符和 Queued 状态添加到新管线队列
+    /// 3. 返回管线 ID，用于后续查询管线状态或获取 GPU 管线
+    /// 
+    /// 注意：该方法不会尝试对已缓存的管线进行去重，即使插入相同的管线
+    /// 也会创建新的缓存条目。
+    /// 
+    /// 参数：
+    /// - descriptor: 渲染管线描述符
+    /// 
+    /// 返回：
+    /// - CachedRenderPipelineId: 缓存的渲染管线 ID
     pub fn queue_render_pipeline(
         &self,
         descriptor: RenderPipelineDescriptor,
     ) -> CachedRenderPipelineId {
+        // 锁定新管线队列（线程安全）
         let mut new_pipelines = self
             .new_pipelines
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+        // 生成唯一 ID
         let id = CachedRenderPipelineId::new(self.pipelines.len() + new_pipelines.len());
+        // 将管线添加到队列
         new_pipelines.push(CachedPipeline {
             descriptor: PipelineDescriptor::RenderPipelineDescriptor(Box::new(descriptor)),
             state: CachedPipelineState::Queued,
@@ -413,15 +540,33 @@ impl PipelineCache {
     ///
     /// [`get_compute_pipeline_state()`]: PipelineCache::get_compute_pipeline_state
     /// [`get_compute_pipeline()`]: PipelineCache::get_compute_pipeline
+    /// 将计算管线插入缓存并排队等待创建
+    /// 
+    /// 该方法会：
+    /// 1. 为新计算管线分配唯一 ID
+    /// 2. 将计算管线描述符和 Queued 状态添加到新管线队列
+    /// 3. 返回管线 ID，用于后续查询管线状态或获取 GPU 计算管线
+    /// 
+    /// 注意：该方法不会尝试对已缓存的管线进行去重，即使插入相同的管线
+    /// 也会创建新的缓存条目。
+    /// 
+    /// 参数：
+    /// - descriptor: 计算管线描述符
+    /// 
+    /// 返回：
+    /// - CachedComputePipelineId: 缓存的计算管线 ID
     pub fn queue_compute_pipeline(
         &self,
         descriptor: ComputePipelineDescriptor,
     ) -> CachedComputePipelineId {
+        // 锁定新管线队列（线程安全）
         let mut new_pipelines = self
             .new_pipelines
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+        // 生成唯一 ID
         let id = CachedComputePipelineId::new(self.pipelines.len() + new_pipelines.len());
+        // 将计算管线添加到队列
         new_pipelines.push(CachedPipeline {
             descriptor: PipelineDescriptor::ComputePipelineDescriptor(Box::new(descriptor)),
             state: CachedPipelineState::Queued,

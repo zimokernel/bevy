@@ -23,6 +23,30 @@
 //!
 //! The [`Draw`] function trait can either be implemented directly or such a function can be
 //! created by composing multiple [`RenderCommand`]s.
+//! 
+//! Render Phase 模块 - Bevy 渲染引擎的核心渲染抽象层
+//! 
+//! 该模块负责将渲染实体组织到不同的渲染阶段（Phase）中，实现高效的批量渲染和状态管理。
+//! 
+//! 在 Bevy 中，每个视图（相机、投射阴影的光源等）可以有一个或多个渲染阶段
+//! （例如：不透明物体、透明物体、阴影等）。这些阶段用于排队等待渲染的实体。
+//! 
+//! 为什么需要多个渲染阶段？
+//! 1. 不同的排序/批处理行为（例如：不透明物体从前到后排序，透明物体从后到前排序）
+//! 2. 某些阶段依赖于前一阶段的渲染结果（例如：屏幕空间反射需要前一帧的渲染纹理）
+//! 
+//! 渲染流程：
+//! 1. **排队阶段** ([`RenderSystems::Queue`])：为每个可见的视图添加对应的 [`PhaseItem`] 到渲染阶段
+//! 2. **排序阶段** ([`RenderSystems::PhaseSort`])：对 PhaseItem 进行排序以优化渲染性能
+//! 3. **渲染阶段** ([`RenderSystems::Render`])：使用单个 [`TrackedRenderPass`] 渲染所有 PhaseItem
+//! 
+//! 每个 PhaseItem 都分配了一个 [`Draw`] 函数，负责：
+//! - 设置渲染状态（选择渲染管线、配置绑定组等）
+//! - 发出绘制调用（draw call）
+//! 
+//! Draw 函数的实现方式：
+//! - 直接实现 Draw trait
+//! - 组合多个 [`RenderCommand`] 隐式实现
 
 mod draw;
 mod draw_state;
@@ -80,6 +104,15 @@ use tracing::warn;
 ///
 /// They're cleared out every frame, but storing them in a resource like this
 /// allows us to reuse allocations.
+/// 存储所有视图中使用 bin 的单个渲染阶段的渲染指令
+/// 
+/// 每个帧都会清空这些数据，但将它们存储在资源中可以重用内存分配
+/// 
+/// 泛型参数：
+/// - BPI: BinnedPhaseItem 类型，表示该渲染阶段使用的 bin 化 PhaseItem
+/// 
+/// 结构：
+/// - HashMap<RetainedViewEntity, BinnedRenderPhase<BPI>>: 视图实体到其对应的 BinnedRenderPhase 的映射
 #[derive(Resource, Deref, DerefMut)]
 pub struct ViewBinnedRenderPhases<BPI>(pub HashMap<RetainedViewEntity, BinnedRenderPhase<BPI>>)
 where
@@ -99,129 +132,129 @@ where
 /// This flavor of render phase is used for phases in which the ordering is less
 /// critical: for example, `Opaque3d`. It's generally faster than the
 /// alternative [`SortedRenderPhase`].
+/// 单个视图的单个渲染阶段的所有渲染指令集合
+/// 
+/// 这是 Bevy 渲染引擎的核心数据结构之一，负责组织和管理要渲染的实体。
+/// 
+/// 适用场景：
+/// - 渲染顺序不太关键的阶段（例如：不透明物体 Opaque3d）
+/// - 相比 SortedRenderPhase 通常更快，因为不需要全局排序
+/// 
+/// 核心设计思想：
+/// 将实体按照 BatchSetKey 和 BinKey 进行分层组织，实现高效的批处理
+/// 
+/// 泛型参数：
+/// - BPI: BinnedPhaseItem 类型
 pub struct BinnedRenderPhase<BPI>
 where
     BPI: BinnedPhaseItem,
 {
-    /// The multidrawable bins.
-    ///
-    /// Each batch set key maps to a *batch set*, which in this case is a set of
-    /// meshes that can be drawn together in one multidraw call. Each batch set
-    /// is subdivided into *bins*, each of which represents a particular mesh.
-    /// Each bin contains the entity IDs of instances of that mesh.
-    ///
-    /// So, for example, if there are two cubes and a sphere present in the
-    /// scene, we would generally have one batch set containing two bins,
-    /// assuming that the cubes and sphere meshes are allocated together and use
-    /// the same pipeline. The first bin, corresponding to the cubes, will have
-    /// two entities in it. The second bin, corresponding to the sphere, will
-    /// have one entity in it.
+    /// 可多绘制（multidrawable）的 mesh bin
+    /// 
+    /// 结构：IndexMap<BatchSetKey, IndexMap<BinKey, RenderBin>>
+    /// - BatchSetKey: 批次集的键，表示可以一起多绘制的一组 mesh
+    /// - BinKey: 每个 bin 的键，表示特定的 mesh
+    /// - RenderBin: 包含该 mesh 的所有实例实体
+    /// 
+    /// 示例：场景中有两个立方体和一个球体
+    /// - BatchSetKey: 表示使用相同管线的 mesh 集合
+    /// - BinKey(立方体): 包含 2 个实体
+    /// - BinKey(球体): 包含 1 个实体
     pub multidrawable_meshes: IndexMap<BPI::BatchSetKey, IndexMap<BPI::BinKey, RenderBin>>,
 
-    /// The bins corresponding to batchable items that aren't multidrawable.
-    ///
-    /// For multidrawable entities, use `multidrawable_meshes`; for
-    /// unbatchable entities, use `unbatchable_values`.
+    /// 可批处理但不可多绘制的 mesh bin
+    /// 
+    /// 结构：IndexMap<(BatchSetKey, BinKey), RenderBin>
+    /// 用于那些可以批处理但不支持多绘制的实体
     pub batchable_meshes: IndexMap<(BPI::BatchSetKey, BPI::BinKey), RenderBin>,
 
-    /// The unbatchable bins.
-    ///
-    /// Each entity here is rendered in a separate drawcall.
+    /// 不可批处理的 mesh bin
+    /// 
+    /// 结构：IndexMap<(BatchSetKey, BinKey), UnbatchableBinnedEntities>
+    /// 每个实体都需要单独的 draw call
     pub unbatchable_meshes: IndexMap<(BPI::BatchSetKey, BPI::BinKey), UnbatchableBinnedEntities>,
 
-    /// Items in the bin that aren't meshes at all.
-    ///
-    /// Bevy itself doesn't place anything in this list, but plugins or your app
-    /// can in order to execute custom drawing commands. Draw functions for each
-    /// entity are simply called in order at rendering time.
-    ///
-    /// See the `custom_phase_item` example for an example of how to use this.
+    /// 非 mesh 类型的 items
+    /// 
+    /// Bevy 本身不会向此列表添加任何内容，但插件或应用程序可以使用它来执行自定义绘制命令
+    /// 在渲染时，每个实体的 Draw 函数将按顺序调用
     pub non_mesh_items: IndexMap<(BPI::BatchSetKey, BPI::BinKey), NonMeshEntities>,
 
-    /// Information on each batch set.
-    ///
-    /// A *batch set* is a set of entities that will be batched together unless
-    /// we're on a platform that doesn't support storage buffers (e.g. WebGL 2)
-    /// and differing dynamic uniform indices force us to break batches. On
-    /// platforms that support storage buffers, a batch set always consists of
-    /// at most one batch.
-    ///
-    /// Multidrawable entities come first, then batchable entities, then
-    /// unbatchable entities.
+    /// 每个批次集（batch set）的信息
+    /// 
+    /// 批次集是一组将被批处理在一起的实体
+    /// - 支持 storage buffer 的平台：一个批次集最多包含一个批次
+    /// - 不支持 storage buffer 的平台（如 WebGL 2）：可能因动态 uniform 索引不同而拆分批次
+    /// 
+    /// 顺序：multidrawable → batchable → unbatchable
     pub(crate) batch_sets: BinnedRenderPhaseBatchSets<BPI::BinKey>,
 
-    /// The batch and bin key for each entity.
-    ///
-    /// We retain these so that, when the entity changes,
-    /// [`Self::sweep_old_entities`] can quickly find the bin it was located in
-    /// and remove it.
+    /// 每个实体的批次和 bin 键缓存
+    /// 
+    /// 用途：当实体发生变化时，sweep_old_entities 可以快速找到它所在的 bin 并移除
     cached_entity_bin_keys: IndexMap<MainEntity, CachedBinnedEntity<BPI>, EntityHash>,
 
-    /// The set of indices in [`Self::cached_entity_bin_keys`] that are
-    /// confirmed to be up to date.
-    ///
-    /// Note that each bit in this bit set refers to an *index* in the
-    /// [`IndexMap`] (i.e. a bucket in the hash table). They aren't entity IDs.
+    /// cached_entity_bin_keys 中已确认是最新的索引集合
+    /// 
+    /// 注意：每个位代表 IndexMap 中的一个索引（哈希表的桶），而不是实体 ID
     valid_cached_entity_bin_keys: FixedBitSet,
 
-    /// The set of entities that changed bins this frame.
-    ///
-    /// An entity will only be present in this list if it was in one bin on the
-    /// previous frame and is in a new bin on this frame. Each list entry
-    /// specifies the bin the entity used to be in. We use this in order to
-    /// remove the entity from the old bin during
-    /// [`BinnedRenderPhase::sweep_old_entities`].
+    /// 本帧中改变了 bin 的实体集合
+    /// 
+    /// 只有当实体在前一帧的 bin 与本帧的 bin 不同时才会出现在此列表
+    /// 用于在 sweep_old_entities 时从旧 bin 中移除实体
     entities_that_changed_bins: Vec<EntityThatChangedBins<BPI>>,
-    /// The gpu preprocessing mode configured for the view this phase is associated
-    /// with.
+    
+    /// 与此阶段关联的视图配置的 GPU 预处理模式
     gpu_preprocessing_mode: GpuPreprocessingMode,
 }
 
-/// All entities that share a mesh and a material and can be batched as part of
-/// a [`BinnedRenderPhase`].
+/// 共享相同 mesh 和材质的所有实体，可以作为 BinnedRenderPhase 的一部分进行批处理
+/// 
+/// 结构：
+/// - entities: IndexMap<MainEntity, InputUniformIndex>
+///   - MainEntity: 主世界中的实体
+///   - InputUniformIndex: GPU buffer 中描述该对象的 uniform 的索引
 #[derive(Default)]
 pub struct RenderBin {
-    /// A list of the entities in each bin, along with their cached
-    /// [`InputUniformIndex`].
+    /// 每个 bin 中的实体列表，以及它们缓存的 InputUniformIndex
     entities: IndexMap<MainEntity, InputUniformIndex, EntityHash>,
 }
 
-/// Information that we track about an entity that was in one bin on the
-/// previous frame and is in a different bin this frame.
+/// 跟踪那些在前一帧位于一个 bin 而本帧位于不同 bin 的实体的信息 
 struct EntityThatChangedBins<BPI>
 where
     BPI: BinnedPhaseItem,
 {
-    /// The entity.
+    /// 实体
     main_entity: MainEntity,
-    /// The key that identifies the bin that this entity used to be in.
+    /// 标识该实体过去所在 bin 的键
     old_cached_binned_entity: CachedBinnedEntity<BPI>,
 }
 
-/// Information that we keep about an entity currently within a bin.
+/// 关于当前位于 bin 中的实体的缓存信息
 pub struct CachedBinnedEntity<BPI>
 where
     BPI: BinnedPhaseItem,
 {
-    /// Information that we use to identify a cached entity in a bin.
+    /// 用于在 bin 中标识缓存实体的信息
     pub cached_bin_key: Option<CachedBinKey<BPI>>,
-    /// The last modified tick of the entity.
-    ///
-    /// We use this to detect when the entity needs to be invalidated.
+    /// 实体的最后修改 tick
+    /// 
+    /// 用于检测实体何时需要失效
     pub change_tick: Tick,
 }
 
-/// Information that we use to identify a cached entity in a bin.
+/// 用于在 bin 中标识缓存实体的信息
 pub struct CachedBinKey<BPI>
 where
     BPI: BinnedPhaseItem,
 {
-    /// The key of the batch set containing the entity.
+    /// 包含该实体的批次集的键
     pub batch_set_key: BPI::BatchSetKey,
-    /// The key of the bin containing the entity.
+    /// 包含该实体的 bin 的键
     pub bin_key: BPI::BinKey,
-    /// The type of render phase that we use to render the entity: multidraw,
-    /// plain batch, etc.
+    /// 用于渲染该实体的渲染阶段类型：multidraw、普通 batch 等
     pub phase_type: BinnedRenderPhaseType,
 }
 
@@ -261,37 +294,41 @@ where
     }
 }
 
-/// How we store and render the batch sets.
-///
-/// Each one of these corresponds to a [`GpuPreprocessingMode`].
+/// 批次集的存储和渲染方式
+/// 
+/// 每个变体对应一种 [`GpuPreprocessingMode`]
 pub enum BinnedRenderPhaseBatchSets<BK> {
-    /// Batches are grouped into batch sets based on dynamic uniforms.
-    ///
-    /// This corresponds to [`GpuPreprocessingMode::None`].
+    /// 批次根据动态 uniform 分组为批次集
+    /// 
+    /// 对应 [`GpuPreprocessingMode::None`]
     DynamicUniforms(Vec<SmallVec<[BinnedRenderPhaseBatch; 1]>>),
 
-    /// Batches are never grouped into batch sets.
-    ///
-    /// This corresponds to [`GpuPreprocessingMode::PreprocessingOnly`].
+    /// 批次从不分组为批次集
+    /// 
+    /// 对应 [`GpuPreprocessingMode::PreprocessingOnly`]
     Direct(Vec<BinnedRenderPhaseBatch>),
 
-    /// Batches are grouped together into batch sets based on their ability to
-    /// be multi-drawn together.
-    ///
-    /// This corresponds to [`GpuPreprocessingMode::Culling`].
+    /// 批次根据它们能否一起多绘制而分组为批次集
+    /// 
+    /// 对应 [`GpuPreprocessingMode::Culling`]
     MultidrawIndirect(Vec<BinnedRenderPhaseBatchSet<BK>>),
 }
 
-/// A group of entities that will be batched together into a single multi-draw
-/// call.
+/// 将被批处理到单个多绘制调用中的一组实体
+/// 
+/// 结构：
+/// - first_batch: 该批次集中的第一个批次
+/// - bin_key: 第一个批次对应的 bin 的键
+/// - batch_count: 批次数量
+/// - index: 批次集在 GPU buffer 中的索引
 pub struct BinnedRenderPhaseBatchSet<BK> {
-    /// The first batch in this batch set.
+    /// 该批次集中的第一个批次
     pub(crate) first_batch: BinnedRenderPhaseBatch,
-    /// The key of the bin that the first batch corresponds to.
+    /// 第一个批次对应的 bin 的键
     pub(crate) bin_key: BK,
-    /// The number of batches.
+    /// 批次数量
     pub(crate) batch_count: u32,
-    /// The index of the batch set in the GPU buffer.
+    /// 批次集在 GPU buffer 中的索引
     pub(crate) index: u32,
 }
 
@@ -305,21 +342,24 @@ impl<BK> BinnedRenderPhaseBatchSets<BK> {
     }
 }
 
-/// Information about a single batch of entities rendered using binned phase
-/// items.
+/// 使用 bin 化 phase items 渲染的单个实体批次的信息
+/// 
+/// 结构：
+/// - representative_entity: 该批次的"代表性"实体
+/// - instance_range: 该批次中的实例索引范围
+/// - extra_index: 批次的动态偏移（仅在不支持 storage buffer 的平台上使用）
 #[derive(Debug)]
 pub struct BinnedRenderPhaseBatch {
-    /// An entity that's *representative* of this batch.
-    ///
-    /// Bevy uses this to fetch the mesh. It can be any entity in the batch.
+    /// 该批次的"代表性"实体
+    /// 
+    /// Bevy 使用它来获取 mesh。可以是批次中的任何实体。
     pub representative_entity: (Entity, MainEntity),
-    /// The range of instance indices in this batch.
+    /// 该批次中的实例索引范围
     pub instance_range: Range<u32>,
 
-    /// The dynamic offset of the batch.
-    ///
-    /// Note that dynamic offsets are only used on platforms that don't support
-    /// storage buffers.
+    /// 批次的动态偏移
+    /// 
+    /// 注意：动态偏移仅在不支持 storage buffer 的平台上使用。
     pub extra_index: PhaseItemExtraIndex,
 }
 

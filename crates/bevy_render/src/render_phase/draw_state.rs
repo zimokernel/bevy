@@ -18,24 +18,30 @@ use tracing::trace;
 type BufferSliceKey = (BufferId, wgpu::BufferAddress, wgpu::BufferSize);
 
 /// Tracks the state of a [`TrackedRenderPass`].
+/// 跟踪 [`TrackedRenderPass`] 的状态
 ///
 /// This is used to skip redundant operations on the [`TrackedRenderPass`] (e.g. setting an already
 /// set pipeline, binding an already bound bind group). These operations can otherwise be fairly
 /// costly due to IO to the GPU, so deduplicating these calls results in a speedup.
+/// 用于跳过 [`TrackedRenderPass`] 上的冗余操作(例如:设置已设置的管线,绑定已绑定的绑定组)
+/// 这些操作由于与 GPU 的 IO 开销可能相当昂贵,因此重复数据删除这些调用可以提高速度
 #[derive(Debug, Default)]
 struct DrawState {
     pipeline: Option<RenderPipelineId>,
     bind_groups: Vec<(Option<BindGroupId>, Vec<u32>)>,
     /// List of vertex buffers by [`BufferId`], offset, and size. See [`DrawState::buffer_slice_key`]
+    /// 按 [`BufferId`], 偏移量和大小列出的顶点缓冲区列表. 参见 [`DrawState::buffer_slice_key`]
     vertex_buffers: Vec<Option<BufferSliceKey>>,
     index_buffer: Option<(BufferSliceKey, IndexFormat)>,
 
     /// Stores whether this state is populated or empty for quick state invalidation
+    /// 存储此状态是已填充还是为空,以便快速使状态失效
     stores_state: bool,
 }
 
 impl DrawState {
     /// Marks the `pipeline` as bound.
+    /// 将 `pipeline` 标记为已绑定
     fn set_pipeline(&mut self, pipeline: RenderPipelineId) {
         // TODO: do these need to be cleared?
         // self.bind_groups.clear();
@@ -46,11 +52,13 @@ impl DrawState {
     }
 
     /// Checks, whether the `pipeline` is already bound.
+    /// 检查 `pipeline` 是否已绑定
     fn is_pipeline_set(&self, pipeline: RenderPipelineId) -> bool {
         self.pipeline == Some(pipeline)
     }
 
     /// Marks the `bind_group` as bound to the `index`.
+    /// 将 `bind_group` 标记为已绑定到 `index`
     fn set_bind_group(&mut self, index: usize, bind_group: BindGroupId, dynamic_indices: &[u32]) {
         let group = &mut self.bind_groups[index];
         group.0 = Some(bind_group);
@@ -60,6 +68,7 @@ impl DrawState {
     }
 
     /// Checks, whether the `bind_group` is already bound to the `index`.
+    /// 检查 `bind_group` 是否已绑定到 `index`
     fn is_bind_group_set(
         &self,
         index: usize,
@@ -74,12 +83,14 @@ impl DrawState {
     }
 
     /// Marks the vertex `buffer` as bound to the `index`.
+    /// 将顶点 `buffer` 标记为已绑定到 `index`
     fn set_vertex_buffer(&mut self, index: usize, buffer_slice: BufferSlice) {
         self.vertex_buffers[index] = Some(self.buffer_slice_key(&buffer_slice));
         self.stores_state = true;
     }
 
     /// Checks, whether the vertex `buffer` is already bound to the `index`.
+    /// 检查顶点 `buffer` 是否已绑定到 `index`
     fn is_vertex_buffer_set(&self, index: usize, buffer_slice: &BufferSlice) -> bool {
         if let Some(current) = self.vertex_buffers.get(index) {
             *current == Some(self.buffer_slice_key(buffer_slice))
@@ -89,6 +100,7 @@ impl DrawState {
     }
 
     /// Returns the value used for checking whether `BufferSlice`s are equivalent.
+    /// 返回用于检查 `BufferSlice` 是否等效的值
     fn buffer_slice_key(&self, buffer_slice: &BufferSlice) -> BufferSliceKey {
         (
             buffer_slice.id(),
@@ -98,38 +110,49 @@ impl DrawState {
     }
 
     /// Marks the index `buffer` as bound.
+    /// 将索引 `buffer` 标记为已绑定
     fn set_index_buffer(&mut self, buffer_slice: &BufferSlice, index_format: IndexFormat) {
         self.index_buffer = Some((self.buffer_slice_key(buffer_slice), index_format));
         self.stores_state = true;
     }
 
     /// Checks, whether the index `buffer` is already bound.
+    /// 检查索引 `buffer` 是否已绑定
     fn is_index_buffer_set(&self, buffer: &BufferSlice, index_format: IndexFormat) -> bool {
         self.index_buffer == Some((self.buffer_slice_key(buffer), index_format))
     }
 
-    /// Resets tracking state
-    pub fn reset_tracking(&mut self) {
-        if !self.stores_state {
-            return;
-        }
+    /// Invalidates the state.
+    /// 使状态失效
+    fn invalidate(&mut self) {
+        self.stores_state = false;
+    }
+
+    /// Clears the state.
+    /// 清除状态
+    fn clear(&mut self) {
         self.pipeline = None;
-        self.bind_groups.iter_mut().for_each(|val| {
-            val.0 = None;
-            val.1.clear();
-        });
-        self.vertex_buffers.iter_mut().for_each(|val| {
-            *val = None;
-        });
+        self.bind_groups.clear();
+        self.vertex_buffers.clear();
         self.index_buffer = None;
         self.stores_state = false;
+    }
+
+    /// Resizes the internal buffers to fit the given capacities.
+    /// 调整内部缓冲区的大小以适应给定的容量
+    fn resize(&mut self, bind_group_capacity: usize, vertex_buffer_capacity: usize) {
+        self.bind_groups.resize(bind_group_capacity, (None, Vec::new()));
+        self.vertex_buffers.resize(vertex_buffer_capacity, None);
     }
 }
 
 /// A [`RenderPass`], which tracks the current pipeline state to skip redundant operations.
+/// 一个 [`RenderPass`], 它跟踪当前管线状态以跳过冗余操作
 ///
 /// It is used to set the current [`RenderPipeline`], [`BindGroup`]s and [`Buffer`]s.
 /// After all requirements are specified, draw calls can be issued.
+/// 用于设置当前的 [`RenderPipeline`], [`BindGroup`] 和 [`Buffer`]
+/// 在所有要求都指定后,可以发出绘制调用
 pub struct TrackedRenderPass<'a> {
     pass: RenderPass<'a>,
     state: DrawState,
@@ -137,6 +160,7 @@ pub struct TrackedRenderPass<'a> {
 
 impl<'a> TrackedRenderPass<'a> {
     /// Tracks the supplied render pass.
+    /// 跟踪提供的渲染通道
     pub fn new(device: &RenderDevice, pass: RenderPass<'a>) -> Self {
         let limits = device.limits();
         let max_bind_groups = limits.max_bind_groups as usize;
@@ -152,17 +176,21 @@ impl<'a> TrackedRenderPass<'a> {
     }
 
     /// Returns the wgpu [`RenderPass`].
+    /// 返回 wgpu [`RenderPass`]
     ///
     /// Function invalidates internal tracking state,
     /// some redundant pipeline operations may not be skipped.
+    /// 函数会使内部跟踪状态失效,一些冗余的管线操作可能不会被跳过
     pub fn wgpu_pass(&mut self) -> &mut RenderPass<'a> {
         self.state.reset_tracking();
         &mut self.pass
     }
 
     /// Sets the active [`RenderPipeline`].
+    /// 设置活动的 [`RenderPipeline`]
     ///
     /// Subsequent draw calls will exhibit the behavior defined by the `pipeline`.
+    /// 后续的绘制调用将表现出由 `pipeline` 定义的行为
     pub fn set_render_pipeline(&mut self, pipeline: &'a RenderPipeline) {
         #[cfg(feature = "detailed_trace")]
         trace!("set pipeline: {:?}", pipeline);
@@ -176,10 +204,13 @@ impl<'a> TrackedRenderPass<'a> {
     /// Sets the active bind group for a given bind group index. The bind group layout
     /// in the active pipeline when any `draw()` function is called must match the layout of
     /// this bind group.
+    /// 为给定的绑定组索引设置活动绑定组.当调用任何 `draw()` 函数时,活动管线中的绑定组布局必须与此绑定组的布局匹配
     ///
     /// If the bind group have dynamic offsets, provide them in binding order.
+    /// 如果绑定组有动态偏移量,请按绑定顺序提供它们
     /// These offsets have to be aligned to [`WgpuLimits::min_uniform_buffer_offset_alignment`](crate::settings::WgpuLimits::min_uniform_buffer_offset_alignment)
     /// or [`WgpuLimits::min_storage_buffer_offset_alignment`](crate::settings::WgpuLimits::min_storage_buffer_offset_alignment) appropriately.
+    /// 这些偏移量必须适当地与 [`WgpuLimits::min_uniform_buffer_offset_alignment`] 或 [`WgpuLimits::min_storage_buffer_offset_alignment`] 对齐
     pub fn set_bind_group(
         &mut self,
         index: usize,
@@ -214,12 +245,15 @@ impl<'a> TrackedRenderPass<'a> {
     }
 
     /// Assign a vertex buffer to a slot.
+    /// 将顶点缓冲区分配到一个槽位
     ///
     /// Subsequent calls to [`draw`] and [`draw_indexed`] on this
     /// [`TrackedRenderPass`] will use `buffer` as one of the source vertex buffers.
+    /// 在此 [`TrackedRenderPass`] 上后续调用 [`draw`] 和 [`draw_indexed`] 将使用 `buffer` 作为源顶点缓冲区之一
     ///
     /// The `slot_index` refers to the index of the matching descriptor in
     /// [`VertexState::buffers`](crate::render_resource::VertexState::buffers).
+    /// `slot_index` 指的是 [`VertexState::buffers`] 中匹配描述符的索引
     ///
     /// [`draw`]: TrackedRenderPass::draw
     /// [`draw_indexed`]: TrackedRenderPass::draw_indexed
@@ -227,7 +261,8 @@ impl<'a> TrackedRenderPass<'a> {
         if self.state.is_vertex_buffer_set(slot_index, &buffer_slice) {
             #[cfg(feature = "detailed_trace")]
             trace!(
-                "set vertex buffer {} (already set): {:?} (offset = {}, size = {})",
+                "set vertex buffer {} (already set): {:?} (offset = {}, size = {})
+",
                 slot_index,
                 buffer_slice.id(),
                 buffer_slice.offset(),
@@ -237,7 +272,8 @@ impl<'a> TrackedRenderPass<'a> {
         }
         #[cfg(feature = "detailed_trace")]
         trace!(
-            "set vertex buffer {}: {:?} (offset = {}, size = {})",
+            "set vertex buffer {}: {:?} (offset = {}, size = {})
+",
             slot_index,
             buffer_slice.id(),
             buffer_slice.offset(),
@@ -250,14 +286,17 @@ impl<'a> TrackedRenderPass<'a> {
     }
 
     /// Sets the active index buffer.
+    /// 设置活动的索引缓冲区
     ///
     /// Subsequent calls to [`TrackedRenderPass::draw_indexed`] will use the buffer referenced by
     /// `buffer_slice` as the source index buffer.
+    /// 后续调用 [`TrackedRenderPass::draw_indexed`] 将使用 `buffer_slice` 引用的缓冲区作为源索引缓冲区
     pub fn set_index_buffer(&mut self, buffer_slice: BufferSlice<'a>, index_format: IndexFormat) {
         let already_set = self.state.is_index_buffer_set(&buffer_slice, index_format);
         #[cfg(feature = "detailed_trace")]
         trace!(
-            "set index buffer{}: {:?} (offset = {}, size = {})",
+            "set index buffer{}: {:?} (offset = {}, size = {})
+",
             if already_set { " (already set)" } else { "" },
             buffer_slice.id(),
             buffer_slice.offset(),

@@ -16,15 +16,22 @@ use thiserror::Error;
 use variadics_please::all_tuples;
 
 /// A draw function used to draw [`PhaseItem`]s.
+/// 用于绘制 [`PhaseItem`] 的 draw 函数
 ///
 /// The draw function can retrieve and query the required ECS data from the render world.
+/// Draw 函数可以从渲染世界中检索和查询所需的 ECS 数据
 ///
 /// This trait can either be implemented directly or implicitly composed out of multiple modular
 /// [`RenderCommand`]s. For more details and an example see the [`RenderCommand`] documentation.
+/// 该特性可以直接实现,也可以通过多个模块化的 [`RenderCommand`] 隐式组成
+/// 更多细节和示例请参见 [`RenderCommand`] 文档
 pub trait Draw<P: PhaseItem>: Send + Sync + 'static {
     /// Prepares the draw function to be used. This is called once and only once before the phase
     /// begins. There may be zero or more [`draw`](Draw::draw) calls following a call to this function.
     /// Implementing this is optional.
+    /// 准备 draw 函数以供使用.在阶段开始之前仅调用一次.
+    /// 在此函数调用之后可能会有零次或多次 [`draw`](Draw::draw) 调用.
+    /// 实现此方法是可选的.
     #[expect(
         unused_variables,
         reason = "The parameters here are intentionally unused by the default implementation; however, putting underscores here will result in the underscores being copied by rust-analyzer's tab completion."
@@ -32,6 +39,7 @@ pub trait Draw<P: PhaseItem>: Send + Sync + 'static {
     fn prepare(&mut self, world: &'_ World) {}
 
     /// Draws a [`PhaseItem`] by issuing zero or more `draw` calls via the [`TrackedRenderPass`].
+    /// 通过 [`TrackedRenderPass`] 发出零次或多次 `draw` 调用来绘制 [`PhaseItem`]
     fn draw<'w>(
         &mut self,
         world: &'w World,
@@ -52,8 +60,10 @@ pub enum DrawError {
 }
 
 /// Stores all [`Draw`] functions for the [`PhaseItem`] type.
+/// 存储 [`PhaseItem`] 类型的所有 [`Draw`] 函数
 ///
 /// For retrieval, the [`Draw`] functions are mapped to their respective [`TypeId`]s.
+/// 为了检索, [`Draw`] 函数被映射到它们各自的 [`TypeId`]
 pub struct DrawFunctionsInternal<P: PhaseItem> {
     pub draw_functions: Vec<Box<dyn Draw<P>>>,
     pub indices: TypeIdMap<DrawFunctionId>,
@@ -61,6 +71,7 @@ pub struct DrawFunctionsInternal<P: PhaseItem> {
 
 impl<P: PhaseItem> DrawFunctionsInternal<P> {
     /// Prepares all draw function. This is called once and only once before the phase begins.
+    /// 准备所有 draw 函数.在阶段开始之前仅调用一次.
     pub fn prepare(&mut self, world: &World) {
         for function in &mut self.draw_functions {
             function.prepare(world);
@@ -68,11 +79,13 @@ impl<P: PhaseItem> DrawFunctionsInternal<P> {
     }
 
     /// Adds the [`Draw`] function and maps it to its own type.
+    /// 添加 [`Draw`] 函数并将其映射到其自身类型
     pub fn add<T: Draw<P>>(&mut self, draw_function: T) -> DrawFunctionId {
         self.add_with::<T, T>(draw_function)
     }
 
     /// Adds the [`Draw`] function and maps it to the type `T`
+    /// 添加 [`Draw`] 函数并将其映射到类型 `T`
     pub fn add_with<T: 'static, D: Draw<P>>(&mut self, draw_function: D) -> DrawFunctionId {
         let id = DrawFunctionId(self.draw_functions.len().try_into().unwrap());
         self.draw_functions.push(Box::new(draw_function));
@@ -81,21 +94,26 @@ impl<P: PhaseItem> DrawFunctionsInternal<P> {
     }
 
     /// Retrieves the [`Draw`] function corresponding to the `id` mutably.
+    /// 可变地检索与 `id` 对应的 [`Draw`] 函数
     pub fn get_mut(&mut self, id: DrawFunctionId) -> Option<&mut dyn Draw<P>> {
         self.draw_functions.get_mut(id.0 as usize).map(|f| &mut **f)
     }
 
     /// Retrieves the id of the [`Draw`] function corresponding to their associated type `T`.
+    /// 检索与关联类型 `T` 对应的 [`Draw`] 函数的 id
     pub fn get_id<T: 'static>(&self) -> Option<DrawFunctionId> {
         self.indices.get(&TypeId::of::<T>()).copied()
     }
 
     /// Retrieves the id of the [`Draw`] function corresponding to their associated type `T`.
+    /// 检索与关联类型 `T` 对应的 [`Draw`] 函数的 id
     ///
     /// Fallible wrapper for [`Self::get_id()`]
+    /// [`Self::get_id()`] 的可能失败的包装器
     ///
     /// ## Panics
     /// If the id doesn't exist, this function will panic.
+    /// 如果 id 不存在,此函数将 panic
     pub fn id<T: 'static>(&self) -> DrawFunctionId {
         self.get_id::<T>().unwrap_or_else(|| {
             panic!(
@@ -108,8 +126,10 @@ impl<P: PhaseItem> DrawFunctionsInternal<P> {
 }
 
 /// Stores all draw functions for the [`PhaseItem`] type hidden behind a reader-writer lock.
+/// 存储 [`PhaseItem`] 类型的所有 draw 函数,隐藏在读写锁后面
 ///
 /// To access them the [`DrawFunctions::read`] and [`DrawFunctions::write`] methods are used.
+/// 要访问它们,请使用 [`DrawFunctions::read`] 和 [`DrawFunctions::write`] 方法
 #[derive(Resource)]
 pub struct DrawFunctions<P: PhaseItem> {
     internal: RwLock<DrawFunctionsInternal<P>>,
@@ -128,11 +148,13 @@ impl<P: PhaseItem> Default for DrawFunctions<P> {
 
 impl<P: PhaseItem> DrawFunctions<P> {
     /// Accesses the draw functions in read mode.
+    /// 以只读模式访问 draw 函数
     pub fn read(&self) -> RwLockReadGuard<'_, DrawFunctionsInternal<P>> {
         self.internal.read().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Accesses the draw functions in write mode.
+    /// 以写入模式访问 draw 函数
     pub fn write(&self) -> RwLockWriteGuard<'_, DrawFunctionsInternal<P>> {
         self.internal
             .write()
